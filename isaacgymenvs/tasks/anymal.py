@@ -97,7 +97,7 @@ class Anymal(VecTask):
         self.Kd = self.cfg["env"]["control"]["damping"]
 
         for key in self.rew_scales.keys():
-            self.rew_scales[key] *= self.dt
+            self.rew_scales[key] *= self.dt ### wsh_annotation: TODO for what???
 
         if self.viewer != None:
             p = self.cfg["env"]["viewer"]["pos"]
@@ -172,7 +172,7 @@ class Anymal(VecTask):
 
         asset_options = gymapi.AssetOptions()
         asset_options.default_dof_drive_mode = gymapi.DOF_MODE_NONE
-        asset_options.collapse_fixed_joints = True
+        asset_options.collapse_fixed_joints = True ### wsh_annotation: Merge links that are connected by fixed joints.
         asset_options.replace_cylinder_with_capsule = True
         asset_options.flip_visual_attachments = True
         asset_options.fix_base_link = self.cfg["env"]["urdfAsset"]["fixBaseLink"]
@@ -234,7 +234,10 @@ class Anymal(VecTask):
     def post_physics_step(self):
         self.progress_buf += 1
 
-        env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
+        ### wsh_annotation: incease self.randomize_buf
+        self.randomize_buf += 1
+
+        env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1) ### wsh_annotation: Don't need to refresh the self.reset_buf first??
         if len(env_ids) > 0:
             self.reset_idx(env_ids)
 

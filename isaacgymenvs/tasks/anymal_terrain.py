@@ -100,7 +100,7 @@ class AnymalTerrain(VecTask):
         self.curriculum = self.cfg["env"]["terrain"]["curriculum"]
 
         for key in self.rew_scales.keys():
-            self.rew_scales[key] *= self.dt
+            self.rew_scales[key] *= self.dt ### wsh_annotation: TODO for what???
 
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
@@ -215,7 +215,7 @@ class AnymalTerrain(VecTask):
 
         asset_options = gymapi.AssetOptions()
         asset_options.default_dof_drive_mode = gymapi.DOF_MODE_EFFORT
-        asset_options.collapse_fixed_joints = True
+        asset_options.collapse_fixed_joints = self.cfg["env"]["urdfAsset"]["collapseFixedJoints"] ### wsh_annotation: modofy 'True' to cfg parameter
         asset_options.replace_cylinder_with_capsule = True
         asset_options.flip_visual_attachments = True
         asset_options.fix_base_link = self.cfg["env"]["urdfAsset"]["fixBaseLink"]
@@ -297,7 +297,7 @@ class AnymalTerrain(VecTask):
 
         self.reset_buf = torch.where(self.progress_buf >= self.max_episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
 
-    def compute_observations(self):
+    def compute_observations(self): ### TODO wsh_annotation: add history buffer and delay
         self.measured_heights = self.get_heights()
         heights = torch.clip(self.root_states[:, 2].unsqueeze(1) - 0.5 - self.measured_heights, -1, 1.) * self.height_meas_scale
         self.obs_buf = torch.cat((  self.base_lin_vel * self.lin_vel_scale,
@@ -407,7 +407,7 @@ class AnymalTerrain(VecTask):
         self.commands[env_ids, 0] = torch_rand_float(self.command_x_range[0], self.command_x_range[1], (len(env_ids), 1), device=self.device).squeeze()
         self.commands[env_ids, 1] = torch_rand_float(self.command_y_range[0], self.command_y_range[1], (len(env_ids), 1), device=self.device).squeeze()
         self.commands[env_ids, 3] = torch_rand_float(self.command_yaw_range[0], self.command_yaw_range[1], (len(env_ids), 1), device=self.device).squeeze()
-        self.commands[env_ids] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.25).unsqueeze(1) # set small commands to zero
+        self.commands[env_ids] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.25).unsqueeze(1) # set small commands to zero. wsh_annotation: TODO 0.25 ?
 
         self.last_actions[env_ids] = 0.
         self.last_dof_vel[env_ids] = 0.
@@ -427,7 +427,7 @@ class AnymalTerrain(VecTask):
             # don't change on initial reset
             return
         distance = torch.norm(self.root_states[env_ids, :2] - self.env_origins[env_ids, :2], dim=1)
-        self.terrain_levels[env_ids] -= 1 * (distance < torch.norm(self.commands[env_ids, :2])*self.max_episode_length_s*0.25)
+        self.terrain_levels[env_ids] -= 1 * (distance < torch.norm(self.commands[env_ids, :2])*self.max_episode_length_s*0.25) ### wsh_annotation: TODO 0.25 ?
         self.terrain_levels[env_ids] += 1 * (distance > self.terrain.env_length / 2)
         self.terrain_levels[env_ids] = torch.clip(self.terrain_levels[env_ids], 0) % self.terrain.env_rows
         self.env_origins[env_ids] = self.terrain_origins[self.terrain_levels[env_ids], self.terrain_types[env_ids]]
@@ -456,7 +456,7 @@ class AnymalTerrain(VecTask):
         self.progress_buf += 1
         self.randomize_buf += 1
         self.common_step_counter += 1
-        if self.common_step_counter % self.push_interval == 0:
+        if self.common_step_counter % self.push_interval == 0: ### TODO wsh_annotation: self.push_interval != 0
             self.push_robots()
 
         # prepare quantities
@@ -466,7 +466,7 @@ class AnymalTerrain(VecTask):
         self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
         forward = quat_apply(self.base_quat, self.forward_vec)
         heading = torch.atan2(forward[:, 1], forward[:, 0])
-        self.commands[:, 2] = torch.clip(0.5*wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
+        self.commands[:, 2] = torch.clip(0.5*wrap_to_pi(self.commands[:, 3] - heading), -1., 1.) ### TODO wsh_annotation: compute reward first?
 
         # compute observations, rewards, resets, ...
         self.check_termination()
@@ -565,7 +565,7 @@ class Terrain:
         self.tot_cols = int(self.env_cols * self.width_per_env_pixels) + 2 * self.border
         self.tot_rows = int(self.env_rows * self.length_per_env_pixels) + 2 * self.border
 
-        self.height_field_raw = np.zeros((self.tot_rows , self.tot_cols), dtype=np.int16)
+        self.height_field_raw = np.zeros((self.tot_rows, self.tot_cols), dtype=np.int16)
         if cfg["curriculum"]:
             self.curiculum(num_robots, num_terrains=self.env_cols, num_levels=self.env_rows)
         else:
@@ -586,13 +586,13 @@ class Terrain:
 
             terrain = SubTerrain("terrain",
                               width=self.width_per_env_pixels,
-                              length=self.width_per_env_pixels,
+                              length=self.length_per_env_pixels, ### wsh_annotation: modify 'width_per_env_pixels' to 'length_per_env_pixels'
                               vertical_scale=self.vertical_scale,
                               horizontal_scale=self.horizontal_scale)
             choice = np.random.uniform(0, 1)
             if choice < 0.1:
                 if np.random.choice([0, 1]):
-                    pyramid_sloped_terrain(terrain, np.random.choice([-0.3, -0.2, 0, 0.2, 0.3]))
+                    pyramid_sloped_terrain(terrain, np.random.choice([-0.3, -0.2, 0, 0.2, 0.3])) ### wsh_annotation: slope_angle = arctan(slope)
                     random_uniform_terrain(terrain, min_height=-0.1, max_height=0.1, step=0.05, downsampled_scale=0.2)
                 else:
                     pyramid_sloped_terrain(terrain, np.random.choice([-0.3, -0.2, 0, 0.2, 0.3]))
@@ -622,7 +622,7 @@ class Terrain:
             for i in range(num_levels):
                 terrain = SubTerrain("terrain",
                                     width=self.width_per_env_pixels,
-                                    length=self.width_per_env_pixels,
+                                    length=self.length_per_env_pixels, ### wsh_annotation: modify 'width_per_env_pixels' to 'length_per_env_pixels'
                                     vertical_scale=self.vertical_scale,
                                     horizontal_scale=self.horizontal_scale)
                 difficulty = i / num_levels

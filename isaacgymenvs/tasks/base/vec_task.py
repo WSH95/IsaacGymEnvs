@@ -213,7 +213,7 @@ class VecTask(Env):
 
         # create envs, sim and viewer
         self.sim_initialized = False
-        self.create_sim()
+        self.create_sim()  # implemented by the extended classes
         self.gym.prepare_sim(self.sim)
         self.sim_initialized = True
 
@@ -604,8 +604,7 @@ class VecTask(Env):
                             (1.0 - sched_scaling)  # linearly interpolate
 
                         var_corr = var_corr * sched_scaling  # scale up var over time
-                        mu_corr = mu_corr * sched_scaling + 1.0 * \
-                            (1.0 - sched_scaling)  # linearly interpolate
+                        mu_corr = mu_corr * sched_scaling ### wsh_annotation: + 1.0 * (1.0 - sched_scaling)  # linearly interpolate
 
                     def noise_lambda(tensor, param_name=nonphysical_param):
                         params = self.dr_randomizations[param_name]
@@ -631,8 +630,8 @@ class VecTask(Env):
                     elif op_type == 'scaling':
                         lo = lo * sched_scaling + 1.0 * (1.0 - sched_scaling)
                         hi = hi * sched_scaling + 1.0 * (1.0 - sched_scaling)
-                        lo_corr = lo_corr * sched_scaling + 1.0 * (1.0 - sched_scaling)
-                        hi_corr = hi_corr * sched_scaling + 1.0 * (1.0 - sched_scaling)
+                        lo_corr = lo_corr * sched_scaling ### wsh_annotation: + 1.0 * (1.0 - sched_scaling)
+                        hi_corr = hi_corr * sched_scaling ### wsh_annotation: + 1.0 * (1.0 - sched_scaling)
 
                     def noise_lambda(tensor, param_name=nonphysical_param):
                         params = self.dr_randomizations[param_name]

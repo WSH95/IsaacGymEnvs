@@ -69,7 +69,7 @@ env:
     footName: SHANK # SHANK if collapsing fixed joint, FOOT otherwise
     kneeName: THIGH
     collapseFixedJoints: True
-    fixBaseLink: false
+    fixBaseLink: False
     defaultDofDriveMode: 4 # see GymDofDriveModeFlags (0 is none, 1 is pos tgt, 2 is vel tgt, 4 effort)
 
   learn:
