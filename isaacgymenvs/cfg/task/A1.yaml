@@ -58,7 +58,7 @@ env:
     maxInitMapLevel: 0
     mapLength: 40.
     mapWidth: 40.
-    numLevels: 1 # 10
+    numLevels: 10 # 10
     numTerrains: 20 # 20
     # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
     terrainProportions: [ 0.1, 0.1, 0.35, 0.25, 0.2 ]
@@ -67,6 +67,7 @@ env:
     numTerrainObservations: 140
     # contain terrain map in observation
     addTerrainObservation: false
+    useMultiprocess: false
 
   randomCommandVelocityRanges:
     # train
