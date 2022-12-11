@@ -247,8 +247,11 @@ class A1(VecTask):
         tm_params.dynamic_friction = self.cfg["env"]["terrain"]["dynamicFriction"]
         tm_params.restitution = self.cfg["env"]["terrain"]["restitution"]
 
+        t1 = time.time()
         self.gym.add_triangle_mesh(self.sim, self.terrain.vertices.flatten(order='C'),
                                    self.terrain.triangles.flatten(order='C'), tm_params)
+        t2 = time.time()
+        print(f"time3: {t2 - t1} s")
         self.height_samples = torch.tensor(self.terrain.heightsamples).view(self.terrain.tot_rows,
                                                                             self.terrain.tot_cols).to(self.device)
 
@@ -674,7 +677,7 @@ class A1(VecTask):
 
 # terrain generator
 from isaacgym.terrain_utils import *
-
+from multiprocessing import shared_memory, Process
 
 class Terrain:
     def __init__(self, cfg, num_robots) -> None:
@@ -689,6 +692,7 @@ class Terrain:
         self.env_width = cfg["mapWidth"]
         self.proportions = [np.sum(cfg["terrainProportions"][:i + 1]) for i in range(len(cfg["terrainProportions"]))]
         self.add_terrain_obs = cfg["addTerrainObservation"]
+        self.use_multiprocess = cfg["useMultiprocess"]
 
         self.env_rows = cfg["numLevels"]
         self.env_cols = cfg["numTerrains"]
@@ -704,19 +708,82 @@ class Terrain:
         self.tot_rows = int(self.env_rows * self.length_per_env_pixels) + 2 * self.border
 
         self.height_field_raw = np.zeros((self.tot_rows, self.tot_cols), dtype=np.int16)
+
+        if self.use_multiprocess:
+            self.shm_height_field_raw = shared_memory.SharedMemory(create=True, size=self.height_field_raw.nbytes)
+            self.shm_env_origins = shared_memory.SharedMemory(create=True, size=self.env_origins.nbytes)
+            self.tmp_height_field_raw = np.ndarray(shape=self.height_field_raw.shape, dtype=self.height_field_raw.dtype,
+                                                   buffer=self.shm_height_field_raw.buf)
+            self.tmp_env_origins = np.ndarray(shape=self.env_origins.shape, dtype=self.env_origins.dtype,
+                                              buffer=self.shm_env_origins.buf)
+            self.tmp_height_field_raw[:] = self.height_field_raw[:]
+            self.tmp_env_origins[:] = self.env_origins[:]
+
+        t1 = time.time()
+
         if cfg["curriculum"]:
-            self.curiculum(num_robots, num_terrains=self.env_cols, num_levels=self.env_rows)
+            self.curriculum(num_robots, num_terrains=self.env_cols, num_levels=self.env_rows)
         else:
-            self.randomized_terrain()
+            self.randomized_terrain(num_terrains=self.env_cols, num_levels=self.env_rows)
+
+        t2 = time.time()
+        print(f"time1: {(t2 - t1)} s")
+
+        if self.use_multiprocess:
+            self.height_field_raw[:] = self.tmp_height_field_raw[:]
+            self.env_origins[:] = self.tmp_env_origins[:]
+
         self.heightsamples = self.height_field_raw
+
+        t1 = time.time()
+
         self.vertices, self.triangles = convert_heightfield_to_trimesh(self.height_field_raw, self.horizontal_scale,
                                                                        self.vertical_scale, cfg["slopeTreshold"])
 
-    def randomized_terrain(self):
-        for k in range(self.num_maps):
-            # Env coordinates in the world
-            (i, j) = np.unravel_index(k, (self.env_rows, self.env_cols))
+        t2 = time.time()
+        print(f"time2: {(t2 - t1)} s")
 
+        if self.use_multiprocess:
+            self.shm_height_field_raw.close()
+            self.shm_env_origins.close()
+            self.shm_height_field_raw.unlink()
+            self.shm_env_origins.unlink()
+
+    def randomized_terrain(self, num_terrains, num_levels):
+        if not self.use_multiprocess:
+            for j in range(num_terrains):
+                self._randomized_terrain_index(j, num_levels, self.height_field_raw, self.env_origins)
+        else:
+            ps = []
+            for j in range(num_terrains):
+                ps.append(Process(target=self._randomized_terrain_index, args=(j, num_levels, self.tmp_height_field_raw, self.tmp_env_origins)))
+            for p in ps:
+                p.start()
+            for p in ps:
+                p.join()
+
+    def curriculum(self, num_robots, num_terrains, num_levels):
+        num_robots_per_map = int(num_robots / num_terrains)
+        left_over = num_robots % num_terrains
+        idx = 0
+
+        if not self.use_multiprocess:
+            for j in range(num_terrains):
+                self._curriculum_index(j, num_robots, num_terrains, num_levels, self.height_field_raw, self.env_origins)
+        else:
+            ps = []
+            for j in range(num_terrains):
+                ps.append(Process(target=self._curriculum_index, args=(j, num_robots, num_terrains, num_levels, self.tmp_height_field_raw, self.tmp_env_origins)))
+            for p in ps:
+                p.start()
+            for p in ps:
+                p.join()
+
+    def _randomized_terrain_index(self, j, num_levels, height_field_raw, env_origins):
+        # # Env coordinates in the world
+        # (i, j) = np.unravel_index(k, (self.env_rows, self.env_cols))
+
+        for i in range(num_levels):
             # Heightfield coordinate system from now on
             start_x = self.border + i * self.length_per_env_pixels
             end_x = self.border + (i + 1) * self.length_per_env_pixels
@@ -736,26 +803,31 @@ class Terrain:
                 if choice < 0.3:
                     pass
                 elif choice < 0.4:
-                    random_uniform_terrain(terrain, min_height=-0.05 * uniform_difficulty, max_height=0.05 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
+                    random_uniform_terrain(terrain, min_height=-0.05 * uniform_difficulty,
+                                           max_height=0.05 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
                 elif choice < 0.6:
                     slope = 0.2 * difficulty
                     if choice < 0.5:
                         slope *= -1
                     pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
                     if np.random.choice([0, 1]):
-                        random_uniform_terrain(terrain, min_height=-0.03 * uniform_difficulty, max_height=0.03 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
+                        random_uniform_terrain(terrain, min_height=-0.03 * uniform_difficulty,
+                                               max_height=0.03 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
                 elif choice < 0.8:
                     step_height = 0.05 * difficulty
                     if choice < 0.7:
                         step_height *= -1
                     pyramid_stairs_terrain(terrain, step_width=0.31, step_height=step_height, platform_size=3.)
                     if np.random.choice([0, 1]):
-                        random_uniform_terrain(terrain, min_height=-0.02 * uniform_difficulty, max_height=0.02 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
+                        random_uniform_terrain(terrain, min_height=-0.02 * uniform_difficulty,
+                                               max_height=0.02 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
                 else:
                     max_height = 0.03 * difficulty
-                    discrete_obstacles_terrain(terrain, max_height=max_height, min_size=1., max_size=2., num_rects=200, platform_size=3.)
+                    discrete_obstacles_terrain(terrain, max_height=max_height, min_size=1., max_size=2., num_rects=200,
+                                               platform_size=3.)
                     if np.random.choice([0, 1]):
-                        random_uniform_terrain(terrain, min_height=-0.005 * uniform_difficulty, max_height=0.005 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
+                        random_uniform_terrain(terrain, min_height=-0.005 * uniform_difficulty,
+                                               max_height=0.005 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
 
             else:
                 if choice < 0.1:
@@ -773,7 +845,7 @@ class Terrain:
                 elif choice < 1.:
                     discrete_obstacles_terrain(terrain, 0.15, 1., 2., 40, platform_size=3.)
 
-            self.height_field_raw[start_x: end_x, start_y:end_y] = terrain.height_field_raw
+            height_field_raw[start_x: end_x, start_y:end_y] = terrain.height_field_raw
 
             env_origin_x = (i + 0.5) * self.env_length
             env_origin_y = (j + 0.5) * self.env_width
@@ -782,103 +854,104 @@ class Terrain:
             y1 = int((self.env_width / 2. - 1) / self.horizontal_scale)
             y2 = int((self.env_width / 2. + 1) / self.horizontal_scale)
             env_origin_z = np.max(terrain.height_field_raw[x1:x2, y1:y2]) * self.vertical_scale
-            self.env_origins[i, j] = [env_origin_x, env_origin_y, env_origin_z]
+            env_origins[i, j] = [env_origin_x, env_origin_y, env_origin_z]
 
-    def curiculum(self, num_robots, num_terrains, num_levels):
-        num_robots_per_map = int(num_robots / num_terrains)
-        left_over = num_robots % num_terrains
-        idx = 0
-        for j in range(num_terrains):
-            for i in range(num_levels):
-                terrain = SubTerrain("terrain",
-                                     width=self.width_per_env_pixels,
-                                     length=self.length_per_env_pixels,
-                                     ### wsh_annotation: modify 'width_per_env_pixels' to 'length_per_env_pixels'
-                                     vertical_scale=self.vertical_scale,
-                                     horizontal_scale=self.horizontal_scale)
-                difficulty = i / num_levels
-                choice = j / num_terrains
+    def _curriculum_index(self, j, num_robots, num_terrains, num_levels, height_field_raw, env_origins):
+        for i in range(num_levels):
+            terrain = SubTerrain("terrain",
+                                 width=self.width_per_env_pixels,
+                                 length=self.length_per_env_pixels,
+                                 ### wsh_annotation: modify 'width_per_env_pixels' to 'length_per_env_pixels'
+                                 vertical_scale=self.vertical_scale,
+                                 horizontal_scale=self.horizontal_scale)
+            difficulty = i / num_levels
+            choice = j / num_terrains
 
-                if not self.add_terrain_obs:
-                    if choice < 0.2:
-                        pass
-                    elif choice < 0.4:
-                        random_uniform_terrain(terrain, min_height=-0.05 * difficulty,
-                                               max_height=0.05 * difficulty, step=0.05, downsampled_scale=0.5)
-                    elif choice < 0.6:
-                        slope = 0.2 * difficulty
-                        uniform_height = 0.03 * difficulty
-                        if choice < 0.5:
-                            slope *= -1
-                            pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
-                            if choice >= 0.45:
-                                random_uniform_terrain(terrain, min_height=-uniform_height, max_height=uniform_height, step=0.05, downsampled_scale=0.5)
-                        else:
-                            pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
-                            if choice >= 0.55:
-                                random_uniform_terrain(terrain, min_height=-uniform_height, max_height=uniform_height, step=0.05, downsampled_scale=0.5)
-                    elif choice < 0.8:
-                        step_height = 0.05 * difficulty
-                        uniform_height = 0.02 * difficulty
-                        if choice < 0.7:
-                            step_height *= -1
-                            pyramid_stairs_terrain(terrain, step_width=0.31, step_height=step_height, platform_size=3.)
-                            if choice >= 0.65:
-                                random_uniform_terrain(terrain, min_height=-uniform_height, max_height=uniform_height, step=0.05, downsampled_scale=0.5)
-                        else:
-                            pyramid_stairs_terrain(terrain, step_width=0.31, step_height=step_height, platform_size=3.)
-                            if choice >= 0.75:
-                                random_uniform_terrain(terrain, min_height=-uniform_height, max_height=uniform_height, step=0.05, downsampled_scale=0.5)
+            if not self.add_terrain_obs:
+                if choice < 0.2:
+                    pass
+                elif choice < 0.4:
+                    random_uniform_terrain(terrain, min_height=-0.05 * difficulty,
+                                           max_height=0.05 * difficulty, step=0.05, downsampled_scale=0.5)
+                elif choice < 0.6:
+                    slope = 0.2 * difficulty
+                    uniform_height = 0.03 * difficulty
+                    if choice < 0.5:
+                        slope *= -1
+                        pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
+                        if choice >= 0.45:
+                            random_uniform_terrain(terrain, min_height=-uniform_height, max_height=uniform_height,
+                                                   step=0.05, downsampled_scale=0.5)
                     else:
-                        max_height = 0.03 * difficulty
-                        uniform_height = 0.005 * difficulty
-                        discrete_obstacles_terrain(terrain, max_height=max_height, min_size=1., max_size=2.,
-                                                   num_rects=200, platform_size=3.)
-                        if choice >= 0.9:
-                            random_uniform_terrain(terrain, min_height=-uniform_height, max_height=uniform_height, step=0.05, downsampled_scale=0.5)
-                else:
-                    slope = difficulty * 0.4
-                    step_height = 0.05 + 0.175 * difficulty
-                    discrete_obstacles_height = 0.025 + difficulty * 0.15
-                    stepping_stones_size = 2 - 1.8 * difficulty
-                    if choice < self.proportions[0]:
-                        if choice < 0.05:
-                            slope *= -1
                         pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
-                    elif choice < self.proportions[1]:
-                        if choice < 0.15:
-                            slope *= -1
-                        pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
-                        random_uniform_terrain(terrain, min_height=-0.1, max_height=0.1, step=0.025, downsampled_scale=0.2)
-                    elif choice < self.proportions[3]:
-                        if choice < self.proportions[2]:
-                            step_height *= -1
+                        if choice >= 0.55:
+                            random_uniform_terrain(terrain, min_height=-uniform_height, max_height=uniform_height,
+                                                   step=0.05, downsampled_scale=0.5)
+                elif choice < 0.8:
+                    step_height = 0.05 * difficulty
+                    uniform_height = 0.02 * difficulty
+                    if choice < 0.7:
+                        step_height *= -1
                         pyramid_stairs_terrain(terrain, step_width=0.31, step_height=step_height, platform_size=3.)
-                    elif choice < self.proportions[4]:
-                        discrete_obstacles_terrain(terrain, discrete_obstacles_height, 1., 2., 40, platform_size=3.)
+                        if choice >= 0.65:
+                            random_uniform_terrain(terrain, min_height=-uniform_height, max_height=uniform_height,
+                                                   step=0.05, downsampled_scale=0.5)
                     else:
-                        stepping_stones_terrain(terrain, stone_size=stepping_stones_size, stone_distance=0.1, max_height=0.,
-                                                platform_size=3.)
+                        pyramid_stairs_terrain(terrain, step_width=0.31, step_height=step_height, platform_size=3.)
+                        if choice >= 0.75:
+                            random_uniform_terrain(terrain, min_height=-uniform_height, max_height=uniform_height,
+                                                   step=0.05, downsampled_scale=0.5)
+                else:
+                    max_height = 0.03 * difficulty
+                    uniform_height = 0.005 * difficulty
+                    discrete_obstacles_terrain(terrain, max_height=max_height, min_size=1., max_size=2.,
+                                               num_rects=200, platform_size=3.)
+                    if choice >= 0.9:
+                        random_uniform_terrain(terrain, min_height=-uniform_height, max_height=uniform_height, step=0.05,
+                                               downsampled_scale=0.5)
+            else:
+                slope = difficulty * 0.4
+                step_height = 0.05 + 0.175 * difficulty
+                discrete_obstacles_height = 0.025 + difficulty * 0.15
+                stepping_stones_size = 2 - 1.8 * difficulty
+                if choice < self.proportions[0]:
+                    if choice < 0.05:
+                        slope *= -1
+                    pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
+                elif choice < self.proportions[1]:
+                    if choice < 0.15:
+                        slope *= -1
+                    pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
+                    random_uniform_terrain(terrain, min_height=-0.1, max_height=0.1, step=0.025, downsampled_scale=0.2)
+                elif choice < self.proportions[3]:
+                    if choice < self.proportions[2]:
+                        step_height *= -1
+                    pyramid_stairs_terrain(terrain, step_width=0.31, step_height=step_height, platform_size=3.)
+                elif choice < self.proportions[4]:
+                    discrete_obstacles_terrain(terrain, discrete_obstacles_height, 1., 2., 40, platform_size=3.)
+                else:
+                    stepping_stones_terrain(terrain, stone_size=stepping_stones_size, stone_distance=0.1, max_height=0.,
+                                            platform_size=3.)
 
-                # Heightfield coordinate system
-                start_x = self.border + i * self.length_per_env_pixels
-                end_x = self.border + (i + 1) * self.length_per_env_pixels
-                start_y = self.border + j * self.width_per_env_pixels
-                end_y = self.border + (j + 1) * self.width_per_env_pixels
-                self.height_field_raw[start_x: end_x, start_y:end_y] = terrain.height_field_raw
+            # Heightfield coordinate system
+            start_x = self.border + i * self.length_per_env_pixels
+            end_x = self.border + (i + 1) * self.length_per_env_pixels
+            start_y = self.border + j * self.width_per_env_pixels
+            end_y = self.border + (j + 1) * self.width_per_env_pixels
+            height_field_raw[start_x: end_x, start_y:end_y] = terrain.height_field_raw
 
-                robots_in_map = num_robots_per_map
-                if j < left_over:
-                    robots_in_map += 1
+            # robots_in_map = num_robots_per_map
+            # if j < left_over:
+            #     robots_in_map += 1
 
-                env_origin_x = (i + 0.5) * self.env_length
-                env_origin_y = (j + 0.5) * self.env_width
-                x1 = int((self.env_length / 2. - 1) / self.horizontal_scale)
-                x2 = int((self.env_length / 2. + 1) / self.horizontal_scale)
-                y1 = int((self.env_width / 2. - 1) / self.horizontal_scale)
-                y2 = int((self.env_width / 2. + 1) / self.horizontal_scale)
-                env_origin_z = np.max(terrain.height_field_raw[x1:x2, y1:y2]) * self.vertical_scale
-                self.env_origins[i, j] = [env_origin_x, env_origin_y, env_origin_z]
+            env_origin_x = (i + 0.5) * self.env_length
+            env_origin_y = (j + 0.5) * self.env_width
+            x1 = int((self.env_length / 2. - 1) / self.horizontal_scale)
+            x2 = int((self.env_length / 2. + 1) / self.horizontal_scale)
+            y1 = int((self.env_width / 2. - 1) / self.horizontal_scale)
+            y2 = int((self.env_width / 2. + 1) / self.horizontal_scale)
+            env_origin_z = np.max(terrain.height_field_raw[x1:x2, y1:y2]) * self.vertical_scale
+            env_origins[i, j] = [env_origin_x, env_origin_y, env_origin_z]
 
 
 @torch.jit.script
