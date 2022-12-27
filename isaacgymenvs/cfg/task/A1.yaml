@@ -27,8 +27,8 @@ env:
 
   baseInitState:
     pos: [ 0.0, 0.0, 0.28 ] # x,y,z [m] 0.28
-#    rot: [ 0.0, 0.0, 0.0, 1.0 ] # x,y,z,w [quat]
-    rpy: [0.0, 0.0, 0.0] # roll, pitch, yaw [rad]
+    #    rot: [ 0.0, 0.0, 0.0, 1.0 ] # x,y,z,w [quat]
+    rpy: [ 0.0, 0.0, 0.0 ] # roll, pitch, yaw [rad]
     vLinear: [ 0.0, 0.0, 0.0 ]  # x,y,z [m/s]
     vAngular: [ 0.0, 0.0, 0.0 ]  # x,y,z [rad/s]
 
@@ -103,6 +103,63 @@ env:
     # cosmetics
     hipRewardScale: -0. #25
 
+    observationConfig:
+      addNoise: false
+      combination:
+        linearVelocity: [ 0, 1, 4, 8 ]
+        angularVelocity: [ 0, 1, 4, 8 ]
+        projectedGravity: [ 0, 1, 4, 8 ]
+        dofPosition: [ 0, 1, 4, 8 ]
+        dofVelocity: [ 0, 1, 4, 8 ]
+        lastAction: 0
+        commands: 0
+      components:
+        linearVelocity:
+          size: 3
+          bufferLength: 10
+          scale: 2.0
+          noise: 0.1
+        angularVelocity:
+          size: 3
+          bufferLength: 10
+          scale: 0.25
+          noise: 0.2
+        projectedGravity:
+          size: 3
+          bufferLength: 10
+          scale: 1.0
+          noise: 0.05
+        dofPosition:
+          size: 12
+          bufferLength: 10
+          scale: 1.0
+          noise: 0.01
+        dofVelocity:
+          size: 12
+          bufferLength: 10
+          scale: 0.05
+          noise: 1.5
+        commands:
+          size: 3
+          bufferLength: 1
+          scale: [ 2.0, 2.0, 0.25 ]
+          noise: 0
+        lastAction:
+          size: 12
+          bufferLength: 1
+          scale: 1.0
+          noise: 0
+        feetContactState:
+          size: 4
+          bufferLength: 10
+          scale: 1.0
+          noise: 0
+        heightMeasurement:
+          size: 0
+          bufferLength: 1
+          scale: 5.0
+          noise: 0.06
+
     # normalization
     linearVelocityScale: 2.0
     angularVelocityScale: 0.25
@@ -144,7 +201,7 @@ sim:
   substeps: 1
   up_axis: "z"
   use_gpu_pipeline: ${eq:${...pipeline},"gpu"}
-  gravity: [0.0, 0.0, -9.81]
+  gravity: [ 0.0, 0.0, -9.81 ]
   physx:
     num_threads: ${....num_threads}
     solver_type: ${....solver_type}
@@ -164,10 +221,6 @@ task:
   randomize: False
   randomization_params:
     frequency: 600   # Define how many environment steps between generating new randomizations
-    observations:
-      range: [ 0, .002 ] # range for the white noise
-      operation: "additive"
-      distribution: "gaussian"
     actions:
       range: [ 0., .02 ]
       operation: "additive"

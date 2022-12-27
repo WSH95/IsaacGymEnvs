@@ -573,7 +573,7 @@ class VecTask(Env):
         if self.first_randomization:
             check_buckets(self.gym, self.envs, dr_params)
 
-        for nonphysical_param in ["observations", "actions"]:
+        for nonphysical_param in ["actions"]: ### wsh_annotation: remove "observations"
             if nonphysical_param in dr_params and do_nonenv_randomize:
                 dist = dr_params[nonphysical_param]["distribution"]
                 op_type = dr_params[nonphysical_param]["operation"]

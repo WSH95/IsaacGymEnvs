@@ -37,6 +37,8 @@ from .base.vec_task import VecTask
 import torch
 from typing import Tuple, Dict
 
+from isaacgymenvs.utils.observation_utils import ObservationBuffer
+
 
 class A1(VecTask):
 
@@ -159,7 +161,7 @@ class A1(VecTask):
         # initialize some data used later on
         self.common_step_counter = 0
         self.extras = {}
-        self.noise_scale_vec = self._get_noise_scale_vec(self.cfg)
+        # self.noise_scale_vec = self._get_noise_scale_vec(self.cfg) ### wsh_annotation
         self.commands = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device,
                                     requires_grad=False)  # x vel, y vel, yaw vel, heading
         self.commands_scale = torch.tensor([self.lin_vel_scale, self.lin_vel_scale, self.ang_vel_scale],
@@ -175,6 +177,8 @@ class A1(VecTask):
                                         requires_grad=False)
         self.feet_air_time = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device, requires_grad=False)
         self.last_dof_vel = torch.zeros_like(self.dof_vel)
+
+        self.feet_contact_state = torch.ones(self.num_envs, 4, dtype=torch.float, device=self.device, requires_grad=False) ### wsh_annotation: 1->contact
 
         self.height_points = self.init_height_points()
         self.measured_heights = None
@@ -199,7 +203,34 @@ class A1(VecTask):
         self.base_ang_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
 
+        ### wsh_annotation: observations dict
+        self.obs_name_to_value = {"linearVelocity": self.base_lin_vel,
+                                  "angularVelocity": self.base_ang_vel,
+                                  "projectedGravity": self.projected_gravity,
+                                  "dofPosition": self.dof_pos,
+                                  "dofVelocity": self.dof_vel,
+                                  "lastAction": self.actions,
+                                  "commands": self.commands[:, 3],
+                                  "feetContactState": self.feet_contact_state}
+        self.obs_combination = self.cfg["env"]["learn"]["observationConfig"]["combination"]
+        self.obs_components = self.cfg["env"]["learn"]["observationConfig"]["components"]
+        add_obs_noise = self.cfg["env"]["learn"]["observationConfig"]["addNoise"]
+        self.obs_buffer_dict = {}
+        for key in self.obs_combination.keys():
+            if add_obs_noise:
+                noise = self.obs_components[key]["noise"]
+            else:
+                noise = None
+            self.obs_buffer_dict[key] = ObservationBuffer(num_envs=self.num_envs,
+                                                          single_data_shape=(self.obs_components[key]["size"],),
+                                                          data_type=torch.float,
+                                                          buffer_length=self.obs_components[key]["bufferLength"],
+                                                          device=self.device,
+                                                          scale=self.obs_components[key]["scale"],
+                                                          noise=noise)
+
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
+        self.compute_observations()
         self.init_done = True
 
     def create_sim(self):
@@ -382,34 +413,25 @@ class A1(VecTask):
         self.reset_buf = torch.where(self.progress_buf >= self.max_episode_length - 1, torch.ones_like(self.reset_buf),
                                      self.reset_buf)
 
-    def compute_observations(self):  ### TODO wsh_annotation: add history buffer and delay. contain terrain info or not.
+    def compute_observations(self):  ### TODO(completed) wsh_annotation: add history buffer and delay. contain terrain info or not.
         # calculate omega command
         forward = quat_apply(self.base_quat, self.forward_vec)
         heading = torch.atan2(forward[:, 1], forward[:, 0])
         self.commands[:, 2] = self._heading_to_omega(heading)
 
+        ### wsh_annotation: record new observations into buffer
+        for key in self.obs_combination.keys():
+            self.obs_buffer_dict[key].record(self.obs_name_to_value[key])
+
+        tmp_obs_buf = torch.cat([self.obs_buffer_dict[key].get_index_data(self.obs_combination[key]) for key in self.obs_combination.keys()], dim=-1)
+
         if self.add_terrain_obs:
             self.measured_heights = self.get_heights()
             heights = torch.clip(self.root_states[:, 2].unsqueeze(1) - 0.5 - self.measured_heights, -1,
                                  1.) * self.height_meas_scale
-            self.obs_buf = torch.cat((self.base_lin_vel * self.lin_vel_scale,
-                                      self.base_ang_vel * self.ang_vel_scale,
-                                      self.projected_gravity,
-                                      self.commands[:, :3] * self.commands_scale,
-                                      self.dof_pos * self.dof_pos_scale,
-                                      self.dof_vel * self.dof_vel_scale,
-                                      heights,
-                                      self.actions
-                                      ), dim=-1)
+            self.obs_buf[:] = torch.cat((tmp_obs_buf, heights), dim=-1)
         else:
-            self.obs_buf = torch.cat((self.base_lin_vel * self.lin_vel_scale,
-                                      self.base_ang_vel * self.ang_vel_scale,
-                                      self.projected_gravity,
-                                      self.commands[:, :3] * self.commands_scale,
-                                      self.dof_pos * self.dof_pos_scale,
-                                      self.dof_vel * self.dof_vel_scale,
-                                      self.actions
-                                      ), dim=-1)
+            self.obs_buf[:] = tmp_obs_buf[:]
 
     def compute_reward(self):
         # velocity tracking reward
@@ -448,13 +470,13 @@ class A1(VecTask):
 
         # air time reward
         # contact = torch.norm(contact_forces[:, feet_indices, :], dim=2) > 1.
-        contact = self.contact_forces[:, self.feet_indices, 2] > self.contact_force_threshold
-        first_contact = (self.feet_air_time > 0.) * contact
+        self.feet_contact_state[:] = self.contact_forces[:, self.feet_indices, 2] > self.contact_force_threshold
+        first_contact = (self.feet_air_time > 0.) * self.feet_contact_state
         self.feet_air_time += self.dt
         # reward only on first contact with the ground TODO self.feet_air_time - 0.5 ?
         rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1) * self.rew_scales["air_time"]
         rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > self.xy_velocity_threshold  # no reward for zero command
-        self.feet_air_time *= ~contact
+        self.feet_air_time *= ~self.feet_contact_state
 
         # cosmetic penalty for hip motion
         rew_hip = torch.sum(torch.abs(self.dof_pos[:, [0, 3, 6, 9]] - self.default_dof_pos[:, [0, 3, 6, 9]]), dim=1) * \
@@ -536,7 +558,14 @@ class A1(VecTask):
         self.base_ang_vel[env_ids] = quat_rotate_inverse(self.base_quat[env_ids], self.root_states[env_ids, 10:13])
         self.projected_gravity[env_ids] = quat_rotate_inverse(self.base_quat[env_ids], self.gravity_vec[env_ids])
         self.actions[env_ids] = 0.0
-        self.compute_observations()
+        self.feet_contact_state[env_ids] = 1
+
+        ### wsh_annotation: reset observation buffer
+        for key in self.obs_combination.keys():
+            if key == "command": ### wsh_annotation: command history is zero
+                self.obs_buffer_dict[key].reset_and_fill_index(env_ids, torch.zeros(len(env_ids), 3, dtype=torch.float, requires_grad=False))
+            else:
+                self.obs_buffer_dict[key].reset_and_fill_index(env_ids, self.obs_name_to_value[key][env_ids])
 
         # fill extras
         self.extras["episode"] = {}
@@ -559,13 +588,13 @@ class A1(VecTask):
         self.env_origins[env_ids] = self.terrain_origins[self.terrain_levels[env_ids], self.terrain_types[env_ids]]
 
     def push_robots(self):
-        # wsh_annotation: TODO How about add external forces ??
+        # wsh_annotation: TODO(!!!) How about add external forces ??
         self.root_states[:, 7:9] = torch_rand_float(-1., 1., (self.num_envs, 2), device=self.device)  # lin vel x/y
         self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.root_states))
 
     def pre_physics_step(self, actions):
         ### wsh_annotation: TODO feed forward torque
-        self.actions = actions.clone().to(self.device)
+        self.actions[:] = actions.clone().to(self.device)
         dof_pos_desired = self.action_scale * self.actions + self.default_dof_pos
         for i in range(self.decimation - 1):
             torques = torch.clip(self.Kp * (dof_pos_desired - self.dof_pos) - self.Kd * self.dof_vel, -33.5, 33.5)
@@ -592,10 +621,10 @@ class A1(VecTask):
             self.push_robots()
 
         # prepare quantities
-        self.base_quat = self.root_states[:, 3:7]
-        self.base_lin_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
-        self.base_ang_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
-        self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
+        self.base_quat[:] = self.root_states[:, 3:7]
+        self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
+        self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
+        self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
 
         # compute observations, rewards, resets, ...
         self.check_termination()
@@ -606,8 +635,10 @@ class A1(VecTask):
             self.reset_idx(env_ids)
 
         self.compute_observations()
-        if self.add_noise:
-            self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
+
+        ### wsh_annotation
+        # if self.add_noise:
+        #     self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
 
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
@@ -673,6 +704,13 @@ class A1(VecTask):
         heights = torch.min(heights1, heights2)
 
         return heights.view(self.num_envs, -1) * self.terrain.vertical_scale
+
+    # ### wsh_annotation: get observation value
+    # def get_base_lin_vel(self):
+    #     return self.base_lin_vel
+    #
+    # def get_base_ang_vel(self):
+    #     return self.base_ang_vel
 
 
 # terrain generator
