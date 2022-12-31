@@ -5,7 +5,7 @@ physics_engine: 'physx'
 
 env:
   numEnvs: ${resolve_default:4096,${...num_envs}}
-  numObservations: 48
+  numObservations: 163
   numActions: 12
   envSpacing: 3.  # [m]
   enableDebugVis: false
@@ -58,8 +58,8 @@ env:
     maxInitMapLevel: 0
     mapLength: 40.
     mapWidth: 40.
-    numLevels: 10 # 10
-    numTerrains: 20 # 20
+    numLevels: 20 # 10
+    numTerrains: 2 # 20
     # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
     terrainProportions: [ 0.1, 0.1, 0.35, 0.25, 0.2 ]
     # tri mesh only:
@@ -104,13 +104,14 @@ env:
     hipRewardScale: -0. #25
 
     observationConfig:
-      addNoise: false
+      addNoise: true
       combination:
         linearVelocity: [ 0, 1, 4, 8 ]
         angularVelocity: [ 0, 1, 4, 8 ]
         projectedGravity: [ 0, 1, 4, 8 ]
         dofPosition: [ 0, 1, 4, 8 ]
         dofVelocity: [ 0, 1, 4, 8 ]
+        feetContactState: [ 0, 1, 4, 8 ]
         lastAction: 0
         commands: 0
       components:

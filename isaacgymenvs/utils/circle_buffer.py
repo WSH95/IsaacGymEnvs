@@ -1,5 +1,6 @@
 import torch
-from typing import Union
+from typing import Union, List
+from omegaconf.listconfig import ListConfig
 
 
 class CircleBuffer:
@@ -25,10 +26,10 @@ class CircleBuffer:
         #     self.buffer[i] = data.clone().to(self.device)
         self.buffer[:] = data.clone().to(self.device).unsqueeze(dim=0).repeat_interleave(self.buffer_len, 0)
 
-    def reset_and_fill_index(self, idx: Union[list, torch.Tensor], data: torch.Tensor):
-        assert isinstance(idx, (list, torch.Tensor))
+    def reset_and_fill_index(self, idx: Union[List, ListConfig, torch.Tensor], data: torch.Tensor):
+        assert isinstance(idx, (List, ListConfig, torch.Tensor))
         assert (len(idx),) + self.single_data_shape == data.shape
-        if isinstance(idx, list):
+        if isinstance(idx, (List, ListConfig)):
             idx = torch.tensor(idx, dtype=torch.long)
         else:
             idx = idx.to(torch.long)
@@ -45,10 +46,10 @@ class CircleBuffer:
         return self.buffer[self.rear].clone()
 
     def get_index_data(self, indices_from_back):
-        assert isinstance(indices_from_back, (torch.Tensor, list, int))
+        assert isinstance(indices_from_back, (torch.Tensor, List, ListConfig, int))
         if isinstance(indices_from_back, torch.Tensor):
             indices = ((self.rear - indices_from_back + self.buffer_len) % self.buffer_len).to(torch.long)
-        elif isinstance(indices_from_back, list):
+        elif isinstance(indices_from_back, (List, ListConfig)):
             indices = ((self.rear - torch.tensor(indices_from_back, dtype=torch.long) + self.buffer_len) % self.buffer_len).to(torch.long)
         else:
             indices = ((self.rear - torch.tensor(indices_from_back, dtype=torch.long).unsqueeze(0) + self.buffer_len) % self.buffer_len).to(torch.long)

@@ -210,7 +210,7 @@ class A1(VecTask):
                                   "dofPosition": self.dof_pos,
                                   "dofVelocity": self.dof_vel,
                                   "lastAction": self.actions,
-                                  "commands": self.commands[:, 3],
+                                  "commands": self.commands[:, :3],
                                   "feetContactState": self.feet_contact_state}
         self.obs_combination = self.cfg["env"]["learn"]["observationConfig"]["combination"]
         self.obs_components = self.cfg["env"]["learn"]["observationConfig"]["components"]
@@ -405,12 +405,12 @@ class A1(VecTask):
         return torch.clip(0.5 * wrap_to_pi(self.commands[:, 3] - heading), -1.5, 1.5)
 
     def check_termination(self):
-        self.reset_buf = torch.norm(self.contact_forces[:, self.base_index, :], dim=1) > 1.
+        self.reset_buf[:] = torch.norm(self.contact_forces[:, self.base_index, :], dim=1) > 1.
         if not self.allow_knee_contacts:
             knee_contact = torch.norm(self.contact_forces[:, self.thigh_indices, :], dim=2) > 1.
-            self.reset_buf |= torch.any(knee_contact, dim=1)
+            self.reset_buf[:] |= torch.any(knee_contact, dim=1)
 
-        self.reset_buf = torch.where(self.progress_buf >= self.max_episode_length - 1, torch.ones_like(self.reset_buf),
+        self.reset_buf[:] = torch.where(self.progress_buf >= self.max_episode_length - 1, torch.ones_like(self.reset_buf),
                                      self.reset_buf)
 
     def compute_observations(self):  ### TODO(completed) wsh_annotation: add history buffer and delay. contain terrain info or not.
@@ -424,6 +424,19 @@ class A1(VecTask):
             self.obs_buffer_dict[key].record(self.obs_name_to_value[key])
 
         tmp_obs_buf = torch.cat([self.obs_buffer_dict[key].get_index_data(self.obs_combination[key]) for key in self.obs_combination.keys()], dim=-1)
+
+        ### wsh_annotation: DEBUG for observation buffer
+        # if self.obs_buffer_dict["linearVelocity"].get_latest_data_raw().equal(self.base_lin_vel) and \
+        #         self.obs_buffer_dict["angularVelocity"].get_latest_data_raw().equal(self.base_ang_vel) and \
+        #         self.obs_buffer_dict["projectedGravity"].get_latest_data_raw().equal(self.projected_gravity) and \
+        #         self.obs_buffer_dict["dofPosition"].get_latest_data_raw().equal(self.dof_pos) and \
+        #         self.obs_buffer_dict["dofVelocity"].get_latest_data_raw().equal(self.dof_vel) and \
+        #         self.obs_buffer_dict["lastAction"].get_latest_data_raw().equal(self.actions) and \
+        #         self.obs_buffer_dict["commands"].get_latest_data_raw().equal(self.commands[:, :3]) and \
+        #         self.obs_buffer_dict["feetContactState"].get_latest_data_raw().equal(self.feet_contact_state):
+        #     print("[success] observation buffer works properly")
+        # else:
+        #     print("[failed] observation buffer works error")
 
         if self.add_terrain_obs:
             self.measured_heights = self.get_heights()
@@ -476,7 +489,7 @@ class A1(VecTask):
         # reward only on first contact with the ground TODO self.feet_air_time - 0.5 ?
         rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1) * self.rew_scales["air_time"]
         rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > self.xy_velocity_threshold  # no reward for zero command
-        self.feet_air_time *= ~self.feet_contact_state
+        self.feet_air_time *= ~self.feet_contact_state.to(torch.int)
 
         # cosmetic penalty for hip motion
         rew_hip = torch.sum(torch.abs(self.dof_pos[:, [0, 3, 6, 9]] - self.default_dof_pos[:, [0, 3, 6, 9]]), dim=1) * \
@@ -546,7 +559,7 @@ class A1(VecTask):
         self.last_dof_vel[env_ids] = 0.
         self.feet_air_time[env_ids] = 0.
         self.progress_buf[env_ids] = 0
-        self.reset_buf[env_ids] = 1
+        self.reset_buf[env_ids] = 1  ### wsh_annotation: TODO
 
         ### wsh_annotation: TODO(completed) reset to acquire the initial obs_buf
         self.gym.refresh_dof_state_tensor(self.sim)
@@ -562,8 +575,8 @@ class A1(VecTask):
 
         ### wsh_annotation: reset observation buffer
         for key in self.obs_combination.keys():
-            if key == "command": ### wsh_annotation: command history is zero
-                self.obs_buffer_dict[key].reset_and_fill_index(env_ids, torch.zeros(len(env_ids), 3, dtype=torch.float, requires_grad=False))
+            if key == "commands": ### wsh_annotation: command history is zero
+                self.obs_buffer_dict[key].reset_and_fill_index(env_ids, torch.zeros(len(env_ids), 3, dtype=torch.float, device=self.device, requires_grad=False))
             else:
                 self.obs_buffer_dict[key].reset_and_fill_index(env_ids, self.obs_name_to_value[key][env_ids])
 
@@ -902,13 +915,13 @@ class Terrain:
                                  ### wsh_annotation: modify 'width_per_env_pixels' to 'length_per_env_pixels'
                                  vertical_scale=self.vertical_scale,
                                  horizontal_scale=self.horizontal_scale)
-            difficulty = i / num_levels
+            difficulty = i / (num_levels - 1)
             choice = j / num_terrains
 
             if not self.add_terrain_obs:
                 if choice < 0.2:
                     pass
-                elif choice < 0.4:
+                elif choice < 0.55:
                     random_uniform_terrain(terrain, min_height=-0.05 * difficulty,
                                            max_height=0.05 * difficulty, step=0.05, downsampled_scale=0.5)
                 elif choice < 0.6:
