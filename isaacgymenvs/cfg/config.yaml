@@ -13,7 +13,7 @@ seed: 42
 torch_deterministic: False
 
 # set the maximum number of learning iterations to train for. overrides default per-environment setting
-max_iterations: ''
+max_iterations: 'runs/A1/nn/last_A1ep1500rew[12.46].pth'
 
 ## Device config
 #  'physx' or 'flex'

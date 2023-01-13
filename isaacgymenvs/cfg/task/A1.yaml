@@ -49,7 +49,7 @@ env:
     RL_calf_joint: -1.7264     # [rad]
 
   terrain:
-    terrainType: trimesh # none, plane, or trimesh
+    terrainType: plane # none, plane, or trimesh
     staticFriction: 0.5  # [-]
     dynamicFriction: 0.46  # [-]
     restitution: 0.1        # [-]
@@ -85,7 +85,7 @@ env:
     decimation: 4
 
   learn:
-    allowKneeContacts: true
+    allowKneeContacts: false
     # rewards
     terminalReward: 0.0
     linearVelocityXYRewardScale: 1.0
@@ -96,7 +96,7 @@ env:
     torqueRewardScale: -0.00002 # -0.000025
     jointAccRewardScale: -0.0005 # -0.0025
     baseHeightRewardScale: -0.0 #5
-    feetAirTimeRewardScale: 1.0
+    feetAirTimeRewardScale: 0.0 # 1.0
     kneeCollisionRewardScale: -0.25
     feetStumbleRewardScale: -0. #-2.0
     actionRateRewardScale: -0. #-0.01
@@ -219,7 +219,7 @@ sim:
     contact_collection: 1 # 0: CC_NEVER (don't collect contact info), 1: CC_LAST_SUBSTEP (collect only contacts on last substep), 2: CC_ALL_SUBSTEPS (default - all contacts)
 
 task:
-  randomize: False
+  randomize: true
   randomization_params:
     frequency: 600   # Define how many environment steps between generating new randomizations
     actions:
