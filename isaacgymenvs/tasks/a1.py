@@ -419,6 +419,10 @@ class A1(VecTask):
         heading = torch.atan2(forward[:, 1], forward[:, 0])
         self.commands[:, 2] = self._heading_to_omega(heading)
 
+        self.commands[:, 0] = 0.5
+        self.commands[:, 1] = 0.0
+        self.commands[:, 2] = 0.0
+
         ### wsh_annotation: record new observations into buffer
         for key in self.obs_combination.keys():
             self.obs_buffer_dict[key].record(self.obs_name_to_value[key])
@@ -470,7 +474,7 @@ class A1(VecTask):
         rew_joint_acc = torch.sum(torch.square(self.last_dof_vel - self.dof_vel), dim=1) * self.rew_scales["joint_acc"]
 
         # collision penalty
-        knee_contact = torch.norm(self.contact_forces[:, self.thigh_indices, :], dim=2) > 1.
+        knee_contact = torch.norm(self.contact_forces[:, self.thigh_indices, :], dim=2) > self.contact_force_threshold
         rew_collision = torch.sum(knee_contact, dim=1) * self.rew_scales["collision"]  # sum vs any ?
 
         # stumbling penalty TODO contact forces x & y are inaccurate
@@ -487,9 +491,9 @@ class A1(VecTask):
         first_contact = (self.feet_air_time > 0.) * self.feet_contact_state
         self.feet_air_time += self.dt
         # reward only on first contact with the ground TODO self.feet_air_time - 0.5 ?
-        rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1) * self.rew_scales["air_time"]
-        rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > self.xy_velocity_threshold  # no reward for zero command
-        self.feet_air_time *= ~self.feet_contact_state.to(torch.int)
+        rew_air_time = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1) * self.rew_scales["air_time"]
+        rew_air_time[:] *= torch.norm(self.commands[:, :2], dim=1) > self.xy_velocity_threshold  # no reward for zero command
+        self.feet_air_time *= (~(self.feet_contact_state > 0.5)).to(torch.int)
 
         # cosmetic penalty for hip motion
         rew_hip = torch.sum(torch.abs(self.dof_pos[:, [0, 3, 6, 9]] - self.default_dof_pos[:, [0, 3, 6, 9]]), dim=1) * \
@@ -497,7 +501,7 @@ class A1(VecTask):
 
         # total reward
         self.rew_buf = rew_lin_vel_xy + rew_ang_vel_z + rew_lin_vel_z + rew_ang_vel_xy + rew_orient + rew_base_height + \
-                       rew_torque + rew_joint_acc + rew_collision + rew_action_rate + rew_airTime + rew_hip + rew_stumble
+                       rew_torque + rew_joint_acc + rew_collision + rew_action_rate + rew_air_time + rew_hip + rew_stumble
         self.rew_buf = torch.clip(self.rew_buf, min=0., max=None)
 
         # add termination reward
@@ -514,7 +518,7 @@ class A1(VecTask):
         self.episode_sums["collision"] += rew_collision
         self.episode_sums["stumble"] += rew_stumble
         self.episode_sums["action_rate"] += rew_action_rate
-        self.episode_sums["air_time"] += rew_airTime
+        self.episode_sums["air_time"] += rew_air_time
         self.episode_sums["base_height"] += rew_base_height
         self.episode_sums["hip"] += rew_hip
 
@@ -558,8 +562,8 @@ class A1(VecTask):
         self.last_actions[env_ids] = 0.
         self.last_dof_vel[env_ids] = 0.
         self.feet_air_time[env_ids] = 0.
-        self.progress_buf[env_ids] = 0
-        self.reset_buf[env_ids] = 1  ### wsh_annotation: TODO
+        # self.progress_buf[env_ids] = 0
+        # self.reset_buf[env_ids] = 1  ### wsh_annotation: TODO
 
         ### wsh_annotation: TODO(completed) reset to acquire the initial obs_buf
         self.gym.refresh_dof_state_tensor(self.sim)
