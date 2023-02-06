@@ -391,9 +391,11 @@ class A1(VecTask):
 
             a1_handle = self.gym.create_actor(env_handle, a1_asset, start_pose, "a1", i, 0, 0)
 
-            for s in range(len(rigid_shape_prop)):
-                rigid_shape_prop[s].friction = friction_buckets[i % num_buckets]
-                rigid_shape_prop[s].restitution = restitution_buckets[i % num_buckets]
+            ### wsh_annotation: set friction and restitution of robots
+            # for s in range(len(rigid_shape_prop)):
+            #     rigid_shape_prop[s].friction = friction_buckets[i % num_buckets]
+            #     rigid_shape_prop[s].restitution = restitution_buckets[i % num_buckets]
+
             self.gym.set_actor_rigid_shape_properties(env_handle, a1_handle, rigid_shape_prop)
 
             self.gym.set_actor_dof_properties(env_handle, a1_handle, dof_props)
@@ -888,7 +890,7 @@ class Terrain:
                 if choice < 0.1:
                     if np.random.choice([0, 1]):
                         pyramid_sloped_terrain(terrain, np.random.choice(
-                            [-0.3, -0.2, 0, 0.2, 0.3]))  ### wsh_annotation: slope_angle = arctan(slope)
+                            [-0.3, -0.2, 0, 0.2, 0.3]))  ### wsh_annotation: slope_angle = arc-tan(slope)
                         random_uniform_terrain(terrain, min_height=-0.1, max_height=0.1, step=0.05,
                                                downsampled_scale=0.2)
                     else:
