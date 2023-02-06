@@ -696,15 +696,16 @@ class VecTask(Env):
                 #               {'stiffness': {'range': [0.75, 1.5], 'operation': 'scaling', 'distribution': 'loguniform'}
                 for prop_name, prop_attrs in actor_properties.items():
                     if prop_name == 'color':
-                        num_bodies = self.gym.get_actor_rigid_body_count(
-                            env, handle)
-                        for n in range(num_bodies):
-                            self.gym.set_rigid_body_color(env, handle, n, gymapi.MESH_VISUAL,
-                                                          gymapi.Vec3(random.uniform(0, 1), random.uniform(0, 1), random.uniform(0, 1)))
+                        if prop_attrs and not self.sim_initialized:
+                            num_bodies = self.gym.get_actor_rigid_body_count(
+                                env, handle)
+                            for n in range(num_bodies):
+                                self.gym.set_rigid_body_color(env, handle, n, gymapi.MESH_VISUAL,
+                                                              gymapi.Vec3(random.uniform(0, 1), random.uniform(0, 1), random.uniform(0, 1)))
                         continue
 
                     if prop_name == 'scale':
-                        setup_only = prop_attrs.get('setup_only', False)
+                        setup_only = prop_attrs.get('setup_only', True)  ### wsh_annotation: change 'False' to 'True'
                         if (setup_only and not self.sim_initialized) or not setup_only:
                             attr_randomization_params = prop_attrs
                             sample = generate_random_samples(attr_randomization_params, 1,
