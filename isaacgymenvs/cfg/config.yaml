@@ -13,29 +13,29 @@ seed: 42
 torch_deterministic: False
 
 # set the maximum number of learning iterations to train for. overrides default per-environment setting
-max_iterations: 'runs/A1/nn/last_A1ep1500rew[12.46].pth'
+max_iterations: ''
 
 ## Device config
 #  'physx' or 'flex'
 physics_engine: 'physx'
 # whether to use cpu or gpu pipeline
-pipeline: 'gpu'
+pipeline: 'gpu' # 'gpu'
 # device for running physics simulation
-sim_device: 'cuda:0'
+sim_device: 'cuda:0' # 'cuda:0'
 # device to run RL
 rl_device: 'cuda:0'
 graphics_device_id: 0
 
 ## PhysX arguments
-num_threads: 4 # Number of worker threads per scene used by PhysX - for CPU PhysX only.
+num_threads: 16 # Number of worker threads per scene used by PhysX - for CPU PhysX only.
 solver_type: 1 # 0: pgs, 1: tgs
-num_subscenes: 4 # Splits the simulation into N physics scenes and runs each one in a separate thread
+num_subscenes: 16 # Splits the simulation into N physics scenes and runs each one in a separate thread
 
 # RLGames Arguments
 # test - if set, run policy in inference mode (requires setting checkpoint to load)
 test: False
 # used to set checkpoint path
-checkpoint: ''
+checkpoint: '' # runs/A1/nn/last_A1ep1500rew[12.41].pth
 # set to True to use multi-gpu horovod training
 multi_gpu: False
 

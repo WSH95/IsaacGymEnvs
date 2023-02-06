@@ -5,7 +5,7 @@ physics_engine: 'physx'
 
 env:
   numEnvs: ${resolve_default:4096,${...num_envs}}
-  numObservations: 163
+  numObservations: 52 # 163
   numActions: 12
   envSpacing: 3.  # [m]
   enableDebugVis: false
@@ -56,9 +56,9 @@ env:
     # rough terrain only:
     curriculum: true
     maxInitMapLevel: 0
-    mapLength: 40.
-    mapWidth: 40.
-    numLevels: 20 # 10
+    mapLength: 50. # 40.
+    mapWidth: 50. # 40.
+    numLevels: 10 # 10
     numTerrains: 2 # 20
     # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
     terrainProportions: [ 0.1, 0.1, 0.35, 0.25, 0.2 ]
@@ -104,16 +104,16 @@ env:
     hipRewardScale: -0. #25
 
     observationConfig:
-      addNoise: true
+      addNoise: false
       combination:
-        linearVelocity: [ 0, 1, 4, 8 ]
-        angularVelocity: [ 0, 1, 4, 8 ]
-        projectedGravity: [ 0, 1, 4, 8 ]
-        dofPosition: [ 0, 1, 4, 8 ]
-        dofVelocity: [ 0, 1, 4, 8 ]
-        feetContactState: [ 0, 1, 4, 8 ]
-        lastAction: 0
-        commands: 0
+        linearVelocity: 0 # [ 0, 1, 4, 8 ] # size -> 3
+        angularVelocity: 0 # [ 0, 1, 4, 8 ] # size -> 3
+        projectedGravity: 0 # [ 0, 1, 4, 8 ] # size -> 3
+        dofPosition: 0 # [ 0, 1, 4, 8 ] # size -> 12
+        dofVelocity: 0 # [ 0, 1, 4, 8 ] # size -> 12
+        feetContactState: 0 # [ 0, 1, 4, 8 ] # size -> 4
+        lastAction: 0 # size -> 12
+        commands: 0 # size -> 3
       components:
         linearVelocity:
           size: 3
@@ -182,7 +182,7 @@ env:
     randomizeContactParams: true
     frictionRange: [ 0.5, 1.25 ]
     restitutionRange: [ 0.0, 0.5 ]
-    pushRobots: true
+    pushRobots: false
     pushInterval_s: 7
 
     # episode length in seconds
@@ -214,12 +214,12 @@ sim:
     bounce_threshold_velocity: 0.2
     max_depenetration_velocity: 100.0
     default_buffer_size_multiplier: 5.0
-    max_gpu_contact_pairs: 8388608 # 8*1024*1024
+    max_gpu_contact_pairs: 30000000 # 8388608 # 8*1024*1024
     num_subscenes: ${....num_subscenes}
     contact_collection: 1 # 0: CC_NEVER (don't collect contact info), 1: CC_LAST_SUBSTEP (collect only contacts on last substep), 2: CC_ALL_SUBSTEPS (default - all contacts)
 
 task:
-  randomize: true
+  randomize: false
   randomization_params:
     frequency: 600   # Define how many environment steps between generating new randomizations
     actions:
@@ -234,8 +234,8 @@ task:
         schedule: "linear"  # "linear" will linearly interpolate between no rand and max rand
         schedule_steps: 3000
     actor_params:
-      anymal:
-        color: True
+      a1:
+        color: true
         rigid_body_properties:
           mass:
             range: [ 0.5, 1.5 ]
@@ -245,16 +245,16 @@ task:
             schedule: "linear"  # "linear" will linearly interpolate between no rand and max rand
             schedule_steps: 3000
         rigid_shape_properties:
-          friction:
+          friction: ### wsh_annotation: default -> 1.0
             num_buckets: 500
-            range: [ 0.7, 1.3 ]
+            range: [ 0.1, 2.1 ]
             operation: "scaling"
             distribution: "uniform"
             schedule: "linear"  # "linear" will scale the current random sample by `min(current num steps, schedule_steps) / schedule_steps`
             schedule_steps: 3000
-          restitution:
-            range: [ 0., 1.5 ]
-            operation: "scaling"
+          restitution: ### wsh_annotation: default -> 0.0
+            range: [ -0.1, 1.3 ]
+            operation: "additive"
             distribution: "uniform"
             schedule: "linear"  # "linear" will scale the current random sample by `min(current num steps, schedule_steps) / schedule_steps`
             schedule_steps: 3000
