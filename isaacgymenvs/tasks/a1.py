@@ -581,7 +581,7 @@ class A1(VecTask):
 
         ### wsh_annotation: reset observation buffer
         for key in self.obs_combination.keys():
-            if key == "commands": ### wsh_annotation: command history is zero
+            if key == "commands":  ### wsh_annotation: command history is zero
                 self.obs_buffer_dict[key].reset_and_fill_index(env_ids, torch.zeros(len(env_ids), 3, dtype=torch.float, device=self.device, requires_grad=False))
             else:
                 self.obs_buffer_dict[key].reset_and_fill_index(env_ids, self.obs_name_to_value[key][env_ids])
@@ -614,6 +614,7 @@ class A1(VecTask):
     def pre_physics_step(self, actions):
         ### wsh_annotation: TODO feed forward torque
         self.actions[:] = actions.clone().to(self.device)
+        self.actions[:, [0, 3, 6, 9]] = 0.
         dof_pos_desired = self.action_scale * self.actions + self.default_dof_pos
         for i in range(self.decimation - 1):
             torques = torch.clip(self.Kp * (dof_pos_desired - self.dof_pos) - self.Kd * self.dof_vel, -33.5, 33.5)
