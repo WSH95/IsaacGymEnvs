@@ -39,6 +39,8 @@ from typing import Tuple, Dict
 
 from isaacgymenvs.utils.observation_utils import ObservationBuffer
 
+from isaacgymenvs.utils.controller_bridge import SingleControllerBridge, VecControllerBridge
+
 
 class A1(VecTask):
 
@@ -49,6 +51,8 @@ class A1(VecTask):
         self.custom_origins = False
         self.debug_viz = self.cfg["env"]["enableDebugVis"]
         self.init_done = False
+        # while True:
+        #     print("wait...")
 
         # base init state
         pos = self.cfg["env"]["baseInitState"]["pos"]
@@ -62,6 +66,7 @@ class A1(VecTask):
 
         # threshold
         self.contact_force_threshold = self.cfg["env"]["contactForceThreshold"]
+        self.stance_foot_force_threshold = self.cfg["env"]["stanceFootForceThreshold"]
         self.xy_velocity_threshold = self.cfg["env"]["xyVelocityCommandThreshold"]
 
         # default joint positions
@@ -203,6 +208,15 @@ class A1(VecTask):
         self.base_ang_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
 
+        # acceleration
+        self.last_base_lin_vel_rel_world = self.root_states[:, 7:10].clone().detach()
+        self.gravity_acc = torch.tensor([0., 0., -9.81], dtype=torch.float, device=self.device, requires_grad=False)
+        self.base_lin_acc = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device,
+                                        requires_grad=False) - self.gravity_acc
+
+        # controller reset buf
+        self.controller_reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
+
         ### wsh_annotation: observations dict
         self.obs_name_to_value = {"linearVelocity": self.base_lin_vel,
                                   "angularVelocity": self.base_ang_vel,
@@ -233,6 +247,8 @@ class A1(VecTask):
         self.compute_observations()
         self.init_done = True
 
+        self.mit_controller = VecControllerBridge(self.num_envs, 16, self.device)
+
     def create_sim(self):
         if self.cfg["sim"]["up_axis"] == "z":
             self.up_axis_idx = 2  # index of up axis: Y=1, Z=2
@@ -244,7 +260,7 @@ class A1(VecTask):
             self._create_ground_plane()
         elif terrain_type == 'trimesh':
             self._create_trimesh()
-            self.custom_origins = True
+            # self.custom_origins = True
         self._create_envs(self.num_envs, self.cfg["env"]['envSpacing'], int(np.sqrt(self.num_envs)))
 
         # If randomizing, apply once immediately on startup before the fist sim step
@@ -400,6 +416,8 @@ class A1(VecTask):
 
             self.gym.set_actor_dof_properties(env_handle, a1_handle, dof_props)
 
+            rigid_body_prop = self.gym.get_actor_rigid_body_properties(env_handle, a1_handle)
+
             self.envs.append(env_handle)
             self.a1_handles.append(a1_handle)
 
@@ -489,7 +507,7 @@ class A1(VecTask):
 
         # air time reward
         # contact = torch.norm(contact_forces[:, feet_indices, :], dim=2) > 1.
-        self.feet_contact_state[:] = self.contact_forces[:, self.feet_indices, 2] > self.contact_force_threshold
+        # self.feet_contact_state[:] = self.contact_forces[:, self.feet_indices, 2] > self.stance_foot_force_threshold
         first_contact = (self.feet_air_time > 0.) * self.feet_contact_state
         self.feet_air_time += self.dt
         # reward only on first contact with the ground TODO self.feet_air_time - 0.5 ?
@@ -532,8 +550,11 @@ class A1(VecTask):
         positions_offset = torch_rand_float(0.8, 1.2, (len(env_ids), self.num_dof), device=self.device)
         velocities = torch_rand_float(-0.1, 0.1, (len(env_ids), self.num_dof), device=self.device)
 
-        self.dof_pos[env_ids] = self.default_dof_pos[env_ids] * positions_offset
-        self.dof_vel[env_ids] = velocities
+        # self.dof_pos[env_ids] = self.default_dof_pos[env_ids] * positions_offset
+        # self.dof_vel[env_ids] = velocities
+
+        self.dof_pos[env_ids] = self.default_dof_pos[env_ids]
+        self.dof_vel[env_ids] = 0.
 
         env_ids_int32 = env_ids.to(dtype=torch.int32)
 
@@ -576,8 +597,17 @@ class A1(VecTask):
         self.base_lin_vel[env_ids] = quat_rotate_inverse(self.base_quat[env_ids], self.root_states[env_ids, 7:10])
         self.base_ang_vel[env_ids] = quat_rotate_inverse(self.base_quat[env_ids], self.root_states[env_ids, 10:13])
         self.projected_gravity[env_ids] = quat_rotate_inverse(self.base_quat[env_ids], self.gravity_vec[env_ids])
+
+        # calculate the linear acceleration of the base
+        self.base_lin_acc[env_ids] = 0.
+        self.base_lin_acc[env_ids] -= self.gravity_acc
+        self.last_base_lin_vel_rel_world[env_ids] = self.root_states[env_ids, 7:10].clone().detach()
+
         self.actions[env_ids] = 0.0
+        self.last_actions[env_ids] = 0.0
         self.feet_contact_state[env_ids] = 1
+
+        self.controller_reset_buf[env_ids] = 1
 
         ### wsh_annotation: reset observation buffer
         for key in self.obs_combination.keys():
@@ -613,26 +643,34 @@ class A1(VecTask):
 
     def pre_physics_step(self, actions):
         ### wsh_annotation: TODO feed forward torque
-        self.actions[:] = actions.clone().to(self.device)
+        # self.actions[:] = actions.clone().to(self.device)
         self.actions[:, [0, 3, 6, 9]] = 0.
         dof_pos_desired = self.action_scale * self.actions + self.default_dof_pos
+        torques = torch.zeros_like(self.torques)
         for i in range(self.decimation - 1):
-            torques = torch.clip(self.Kp * (dof_pos_desired - self.dof_pos) - self.Kd * self.dof_vel, -33.5, 33.5)
+            torques[:] = self.mit_controller.get_torque(self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state) # self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state
+            # torques = torch.clip(self.Kp * (dof_pos_desired - self.dof_pos) - self.Kd * self.dof_vel, -33.5, 33.5)
+            # print("torques: ", torques)
+            # torques = torch.zeros_like(torques)
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
             # self.torques = torques.view(self.torques.shape)
             self.gym.simulate(self.sim)
             if self.device == 'cpu':
                 self.gym.fetch_results(self.sim, True)
-            self.gym.refresh_dof_state_tensor(self.sim)
-        torques = torch.clip(self.Kp * (dof_pos_desired - self.dof_pos) - self.Kd * self.dof_vel, -33.5, 33.5)
+            # self.gym.refresh_dof_state_tensor(self.sim)
+            self.update_pre_state()
+        torques[:] = self.mit_controller.get_torque(self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state)
+        # torques = torch.clip(self.Kp * (dof_pos_desired - self.dof_pos) - self.Kd * self.dof_vel, -33.5, 33.5)
+        # print("torques: ", torques)
+        # torques = torch.zeros_like(torques)
         self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
         self.torques = torques.view(self.torques.shape)
 
     def post_physics_step(self):
-        self.gym.refresh_dof_state_tensor(self.sim)
-        self.gym.refresh_actor_root_state_tensor(self.sim)
-        self.gym.refresh_net_contact_force_tensor(self.sim)
-        self.gym.refresh_force_sensor_tensor(self.sim)
+        # self.gym.refresh_dof_state_tensor(self.sim)
+        # self.gym.refresh_actor_root_state_tensor(self.sim)
+        # self.gym.refresh_net_contact_force_tensor(self.sim)
+        # self.gym.refresh_force_sensor_tensor(self.sim)
 
         self.progress_buf += 1
         self.randomize_buf += 1
@@ -640,11 +678,13 @@ class A1(VecTask):
         if self.push_flag and self.common_step_counter % self.push_interval == 0:  ### wsh_annotation: self.push_interval > 0
             self.push_robots()
 
-        # prepare quantities
-        self.base_quat[:] = self.root_states[:, 3:7]
-        self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
-        self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
-        self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
+        # # prepare quantities
+        # self.base_quat[:] = self.root_states[:, 3:7]
+        # self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
+        # self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
+        # self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
+
+        self.update_pre_state()
 
         # compute observations, rewards, resets, ...
         self.check_termination()
@@ -732,6 +772,27 @@ class A1(VecTask):
     # def get_base_ang_vel(self):
     #     return self.base_ang_vel
 
+    def update_pre_state(self):
+        self.gym.refresh_dof_state_tensor(self.sim)
+        self.gym.refresh_actor_root_state_tensor(self.sim)
+        self.gym.refresh_net_contact_force_tensor(self.sim)
+        self.gym.refresh_force_sensor_tensor(self.sim)
+
+        self.base_quat[:] = self.root_states[:, 3:7]
+        self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
+        self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
+        self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
+
+        self.feet_contact_state[:] = self.contact_forces[:, self.feet_indices, 2] > self.stance_foot_force_threshold
+
+        self.base_lin_acc[:] = quat_rotate_inverse(self.base_quat, ((self.root_states[:,
+                                                                     7:10] - self.last_base_lin_vel_rel_world) / self.sim_params.dt - self.gravity_acc))
+        self.last_base_lin_vel_rel_world[:] = self.root_states[:, 7:10].clone().detach()
+
+        self.controller_reset_buf[:] = 0
+
+        # print("lin acc: ", self.base_lin_acc)
+        # print("last vel:", self.last_base_lin_vel_rel_world)
 
 # terrain generator
 from isaacgym.terrain_utils import *
@@ -858,27 +919,27 @@ class Terrain:
             difficulty = np.random.uniform(0, 1)
             uniform_difficulty = np.random.uniform(0, 1)
             if not self.add_terrain_obs:
-                if choice < 0.3:
+                if choice < 0.0:
                     pass
                 elif choice < 0.4:
-                    random_uniform_terrain(terrain, min_height=-0.05 * uniform_difficulty,
-                                           max_height=0.05 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
-                elif choice < 0.6:
+                    random_uniform_terrain(terrain, min_height=-0.03 * uniform_difficulty,
+                                           max_height=0.03 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
+                elif choice < 0.7:
                     slope = 0.2 * difficulty
                     if choice < 0.5:
                         slope *= -1
-                    pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
+                    pyramid_sloped_terrain(terrain, slope=slope, platform_size=0.5)
                     if np.random.choice([0, 1]):
-                        random_uniform_terrain(terrain, min_height=-0.03 * uniform_difficulty,
-                                               max_height=0.03 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
-                elif choice < 0.8:
-                    step_height = 0.05 * difficulty
-                    if choice < 0.7:
-                        step_height *= -1
-                    pyramid_stairs_terrain(terrain, step_width=0.31, step_height=step_height, platform_size=3.)
-                    if np.random.choice([0, 1]):
-                        random_uniform_terrain(terrain, min_height=-0.02 * uniform_difficulty,
-                                               max_height=0.02 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
+                        random_uniform_terrain(terrain, min_height=-0.005 * uniform_difficulty,
+                                               max_height=0.005 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
+                # elif choice < 0.8:
+                #     step_height = 0.05 * difficulty
+                #     if choice < 0.7:
+                #         step_height *= -1
+                #     pyramid_stairs_terrain(terrain, step_width=0.31, step_height=step_height, platform_size=3.)
+                #     if np.random.choice([0, 1]):
+                #         random_uniform_terrain(terrain, min_height=-0.002 * uniform_difficulty,
+                #                                max_height=0.002 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
                 else:
                     max_height = 0.03 * difficulty
                     discrete_obstacles_terrain(terrain, max_height=max_height, min_size=1., max_size=2., num_rects=200,
@@ -922,18 +983,18 @@ class Terrain:
                                  ### wsh_annotation: modify 'width_per_env_pixels' to 'length_per_env_pixels'
                                  vertical_scale=self.vertical_scale,
                                  horizontal_scale=self.horizontal_scale)
-            difficulty = i / (num_levels - 1)
+            difficulty = (i + 1) / (num_levels) #  - 1
             choice = j / num_terrains
 
             if not self.add_terrain_obs:
                 if choice < 0.2:
                     pass
-                elif choice < 0.55:
+                elif choice < 0.4:
                     random_uniform_terrain(terrain, min_height=-0.05 * difficulty,
                                            max_height=0.05 * difficulty, step=0.05, downsampled_scale=0.5)
                 elif choice < 0.6:
                     slope = 0.2 * difficulty
-                    uniform_height = 0.03 * difficulty
+                    uniform_height = 0.003 * difficulty
                     if choice < 0.5:
                         slope *= -1
                         pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
