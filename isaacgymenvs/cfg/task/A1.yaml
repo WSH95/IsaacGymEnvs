@@ -11,7 +11,7 @@ env:
   enableDebugVis: false
 
   urdfAsset:
-    file: "urdf/a1/urdf/a1.urdf"
+    file: "urdf/a1/urdf/a1_old.urdf"
     baseName: trunk
     thighName: thigh
     calfName: calf
@@ -23,10 +23,11 @@ env:
 
   # threshold
   contactForceThreshold: 1.0
+  stanceFootForceThreshold: 25.0
   xyVelocityCommandThreshold: 0.05
 
   baseInitState:
-    pos: [ 0.0, 0.0, 0.28 ] # x,y,z [m] 0.28
+    pos: [ 0.0, 0.0, 0.30001 ] # x,y,z [m] 0.28
     #    rot: [ 0.0, 0.0, 0.0, 1.0 ] # x,y,z,w [quat]
     rpy: [ 0.0, 0.0, 0.0 ] # roll, pitch, yaw [rad]
     vLinear: [ 0.0, 0.0, 0.0 ]  # x,y,z [m/s]
@@ -38,15 +39,15 @@ env:
     RR_hip_joint: 0.0   # [rad]
     RL_hip_joint: 0.0   # [rad]
 
-    FR_thigh_joint: 0.8632     # [rad]
-    FL_thigh_joint: 0.8632    # [rad]
-    RR_thigh_joint: 0.8632     # [rad]
-    RL_thigh_joint: 0.8632    # [rad]
+    FR_thigh_joint: 0.7954 # 0.8632     # [rad]
+    FL_thigh_joint: 0.7954 # 0.8632     # [rad]
+    RR_thigh_joint: 0.7954 # 0.8632     # [rad]
+    RL_thigh_joint: 0.7954 # 0.8632     # [rad]
 
-    FR_calf_joint: -1.7264    # [rad]
-    FL_calf_joint: -1.7264     # [rad]
-    RR_calf_joint: -1.7264    # [rad]
-    RL_calf_joint: -1.7264     # [rad]
+    FR_calf_joint: -1.5908 # -1.7264    # [rad]
+    FL_calf_joint: -1.5908 # -1.7264    # [rad]
+    RR_calf_joint: -1.5908 # -1.7264    # [rad]
+    RL_calf_joint: -1.5908 # -1.7264    # [rad]
 
   terrain:
     terrainType: plane # none, plane, or trimesh
@@ -54,12 +55,12 @@ env:
     dynamicFriction: 0.46  # [-]
     restitution: 0.1        # [-]
     # rough terrain only:
-    curriculum: true
+    curriculum: false
     maxInitMapLevel: 0
-    mapLength: 50. # 40.
-    mapWidth: 50. # 40.
+    mapLength: 8. # 40.
+    mapWidth: 8. # 40.
     numLevels: 10 # 10
-    numTerrains: 2 # 20
+    numTerrains: 20 # 20
     # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
     terrainProportions: [ 0.1, 0.1, 0.35, 0.25, 0.2 ]
     # tri mesh only:
@@ -119,12 +120,12 @@ env:
           size: 3
           bufferLength: 10
           scale: 2.0
-          noise: 0.1
+          noise: 0.02
         angularVelocity:
           size: 3
           bufferLength: 10
           scale: 0.25
-          noise: 0.2
+          noise: 0.002
         projectedGravity:
           size: 3
           bufferLength: 10
@@ -134,12 +135,12 @@ env:
           size: 12
           bufferLength: 10
           scale: 1.0
-          noise: 0.01
+          noise: 0.002
         dofVelocity:
           size: 12
           bufferLength: 10
           scale: 0.05
-          noise: 1.5
+          noise: 0.2
         commands:
           size: 3
           bufferLength: 1
@@ -191,15 +192,15 @@ env:
   # viewer cam:
   viewer:
     refEnv: 0
-    pos: [ 0, 0, 10 ]  # [m]
-    lookat: [ 1., 1, 9 ]  # [m]
+    pos: [ 12., 12., 1. ]  # [m]
+    lookat: [ 13., 13., 0. ]  # [m]
 
   # set to True if you use camera sensors in the environment
   enableCameraSensors: False
 
 sim:
   dt: 0.002 # 0.005
-  substeps: 1
+  substeps: 4
   up_axis: "z"
   use_gpu_pipeline: ${eq:${...pipeline},"gpu"}
   gravity: [ 0.0, 0.0, -9.81 ]
@@ -265,7 +266,7 @@ task:
             distribution: "uniform"
             schedule: "linear"  # "linear" will scale the current random sample by `min(current num steps, schedule_steps) / schedule_steps`
             schedule_steps: 3000
-          friction:
+          stiffness:
             range: [ 0.5, 1.5 ]
             operation: "scaling"
             distribution: "uniform"
