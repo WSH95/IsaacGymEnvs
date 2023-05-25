@@ -31,6 +31,24 @@
   <material name="white">
     <color rgba="1.0 1.0 1.0 1.0"/>
   </material>
+  <material name="gunmetal">
+    <color rgba="0.109803921568627 0.215686274509803 0.219607843137254 1.0"/>
+  </material>
+  <material name="charcoal">
+    <color rgba="0.192156862745098 0.24313725490196 0.313725490196078 1.0"/>
+  </material>
+  <material name="charcoal2">
+    <color rgba="0.270588235294117 0.333333333333333 0.380392156862745 1.0"/>
+  </material>
+  <material name="payne's_gray">
+    <color rgba="0.36078431372549 0.4 0.447058823529411 1.0"/>
+  </material>
+  <material name="slate_gray">
+    <color rgba="0.423529411764705 0.435294117647058 0.498039215686274 1.0"/>
+  </material>
+  <material name="delft_blue">
+    <color rgba="0.227450980392 0.262745098039 0.36862745098 1.0"/>
+  </material>
   
   <link name="trunk">
     <visual>
@@ -38,7 +56,7 @@
       <geometry>
         <mesh filename="../meshes_old/trunk.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="charcoal"/>
     </visual>
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0"/>
@@ -68,7 +86,7 @@
       <geometry>
         <mesh filename="../meshes_old/hip.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="payne's_gray"/>
     </visual>
     <!--<collision>
       <origin rpy="1.5707963267948966 0 0" xyz="0 0 0"/>
@@ -98,7 +116,7 @@
       <geometry>
         <mesh filename="../meshes_old/thigh_mirror.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="charcoal2"/>
     </visual>
     <collision>
       <origin rpy="0 1.5707963267948966 0" xyz="0 0 -0.1"/>
@@ -128,7 +146,7 @@
       <geometry>
         <mesh filename="../meshes_old/calf.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="slate_gray"/>
     </visual>
     <collision>
       <origin rpy="0 1.5707963267948966 0" xyz="0 0 -0.1"/>
@@ -184,7 +202,7 @@
       <geometry>
         <mesh filename="../meshes_old/hip.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="payne's_gray"/>
     </visual>
     <!--<collision>
       <origin rpy="1.5707963267948966 0 0" xyz="0 0 0"/>
@@ -214,7 +232,7 @@
       <geometry>
         <mesh filename="../meshes_old/thigh.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="charcoal2"/>
     </visual>
     <collision>
       <origin rpy="0 1.5707963267948966 0" xyz="0 0 -0.1"/>
@@ -244,7 +262,7 @@
       <geometry>
         <mesh filename="../meshes_old/calf.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="slate_gray"/>
     </visual>
     <collision>
       <origin rpy="0 1.5707963267948966 0" xyz="0 0 -0.1"/>
@@ -300,7 +318,7 @@
       <geometry>
         <mesh filename="../meshes_old/hip.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="payne's_gray"/>
     </visual>
     <!--<collision>
       <origin rpy="1.5707963267948966 0 0" xyz="0 0 0"/>
@@ -330,7 +348,7 @@
       <geometry>
         <mesh filename="../meshes_old/thigh_mirror.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="charcoal2"/>
     </visual>
     <collision>
       <origin rpy="0 1.5707963267948966 0" xyz="0 0 -0.1"/>
@@ -360,7 +378,7 @@
       <geometry>
         <mesh filename="../meshes_old/calf.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="slate_gray"/>
     </visual>
     <collision>
       <origin rpy="0 1.5707963267948966 0" xyz="0 0 -0.1"/>
@@ -416,7 +434,7 @@
       <geometry>
         <mesh filename="../meshes_old/hip.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="payne's_gray"/>
     </visual>
     <!--<collision>
       <origin rpy="1.5707963267948966 0 0" xyz="0 0 0"/>
@@ -446,7 +464,7 @@
       <geometry>
         <mesh filename="../meshes_old/thigh.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="charcoal2"/>
     </visual>
     <collision>
       <origin rpy="0 1.5707963267948966 0" xyz="0 0 -0.1"/>
@@ -476,7 +494,7 @@
       <geometry>
         <mesh filename="../meshes_old/calf.dae" scale="1 1 1"/>
       </geometry>
-      <material name="orange"/>
+      <material name="slate_gray"/>
     </visual>
     <collision>
       <origin rpy="0 1.5707963267948966 0" xyz="0 0 -0.1"/>
