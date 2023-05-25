@@ -28,6 +28,10 @@ class VecControllerBridge:
 
         self.count = 0
 
+        self.motion_order = torch.arange(start=0, end=28, dtype=torch.int64, device=self.device, requires_grad=False)
+        for i in range(4):
+            self.motion_order[3 + 4 * i: 7 + 4 * i] = self.contact_order + (3 + 4 * i)
+
     def get_torque(self,
                    reset_buf: torch.Tensor,
                    base_quat: torch.Tensor,
@@ -35,7 +39,8 @@ class VecControllerBridge:
                    base_lin_acc: torch.Tensor,
                    dof_pos: torch.Tensor,
                    dof_vel: torch.Tensor,
-                   contact_state: torch.Tensor):
+                   contact_state: torch.Tensor,
+                   motion_planning_cmd: torch.Tensor):
         t1 = time.time_ns()
         # print("count: ", self.count)
 
@@ -46,6 +51,7 @@ class VecControllerBridge:
         dof_pos_cpu = dof_pos[:, self.dof_order].contiguous().cpu().numpy()
         dof_vel_cpu = dof_vel[:, self.dof_order].contiguous().cpu().numpy()
         contact_state_cpu = (contact_state[:, self.contact_order] * 0.5).contiguous().cpu().numpy()
+        motion_planning_cmd_cpu = motion_planning_cmd[:, self.motion_order].contiguous().cpu().numpy()
 
         # print("reset_env_ids_cpu: ", reset_env_ids_cpu)
         # print("base_quat_cpu: ", base_quat_cpu)
@@ -54,6 +60,7 @@ class VecControllerBridge:
         # print("dof_pos_cpu: ", dof_pos_cpu)
         # print("dof_vel_cpu: ", dof_vel_cpu)
         # print("contact_state_cpu: ", contact_state_cpu)
+        # print("motion_planning_cmd_cpu: ", motion_planning_cmd_cpu)
 
         # reset_env_ids_cpu = reset_buf.contiguous().cpu()
         # base_quat_cpu = base_quat.contiguous().cpu()
@@ -72,7 +79,8 @@ class VecControllerBridge:
         # set torque_numpy to be writeable
         torque_numpy.setflags(write=1)
         self.controller.getMotorCommands2(torque_numpy, reset_env_ids_cpu, base_quat_cpu, base_ang_vel_cpu,
-                                          base_lin_acc_cpu, dof_pos_cpu, dof_vel_cpu, contact_state_cpu)
+                                          base_lin_acc_cpu, dof_pos_cpu, dof_vel_cpu, contact_state_cpu,
+                                          motion_planning_cmd_cpu)
 
         # print("py_torque_numpy", torque_numpy)
         torque = torch.zeros_like(dof_pos)
@@ -108,6 +116,10 @@ class SingleControllerBridge:
 
         self.controller = SingleController("/home/wsh/Documents/ros2Projects/QuadrupedSim_webots_ros2/ControllerWrapper/config/")
 
+        self.motion_order = torch.arange(start=0, end=28, dtype=torch.int64, device=self.device, requires_grad=False)
+        for i in range(4):
+            self.motion_order[3 + 4 * i: 7 + 4 * i] = self.contact_order + (3 + 4 * i)
+
     def get_torque(self,
                    controller_reset_buf: torch.Tensor,
                    base_quat: torch.Tensor,
@@ -115,7 +127,8 @@ class SingleControllerBridge:
                    base_lin_acc: torch.Tensor,
                    dof_pos: torch.Tensor,
                    dof_vel: torch.Tensor,
-                   contact_state: torch.Tensor):
+                   contact_state: torch.Tensor,
+                   motion_planning_cmd: torch.Tensor):
         t1 = time.time_ns()
 
         reset_env_ids_cpu = controller_reset_buf.contiguous().cpu().numpy()
@@ -125,6 +138,7 @@ class SingleControllerBridge:
         dof_pos_cpu = dof_pos[:, self.dof_order].contiguous().cpu().numpy()
         dof_vel_cpu = dof_vel[:, self.dof_order].contiguous().cpu().numpy()
         contact_state_cpu = (contact_state[:, self.contact_order] * 0.5).contiguous().cpu().numpy()
+        motion_planning_cmd_cpu = motion_planning_cmd[:, self.motion_order].contiguous().cpu().numpy()
 
         dof_pos_cpu[:, 4:] *= -1.
         dof_vel_cpu[:, 4:] *= -1.
@@ -143,7 +157,8 @@ class SingleControllerBridge:
         # set torque_numpy to be writeable
         torque_numpy.setflags(write=1)
         self.controller.getMotorCommands2(torque_numpy, reset_env_ids_cpu, base_quat_cpu, base_ang_vel_cpu,
-                                          base_lin_acc_cpu, dof_pos_cpu, dof_vel_cpu, contact_state_cpu)
+                                          base_lin_acc_cpu, dof_pos_cpu, dof_vel_cpu, contact_state_cpu,
+                                          motion_planning_cmd_cpu)
         torque = torch.zeros_like(dof_pos)
         torque[:] = torch.from_numpy(torque_numpy).float().to(self.device)[:, self.torque_order]
         torque[:, self.torque_inverse_index] *= -1.
