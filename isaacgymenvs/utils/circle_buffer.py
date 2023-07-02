@@ -56,6 +56,13 @@ class CircleBuffer:
 
         return self.buffer[indices].clone().permute(*self.permute_list).flatten(1, 2)
 
+    def get_len_data(self, length: int):
+        assert 0 < length < self.buffer_len + 1
+        if self.rear == self.buffer_len - 1:
+            return self.buffer[-length:].clone().permute(1, 2, 0)
+        else:
+            return torch.cat((self.buffer[self.rear + 1:], self.buffer[:self.rear + 1]), dim=0)[-length:].permute(1, 2, 0)
+
 
 if __name__ == "__main__":
     buffer = CircleBuffer(3, (2,), torch.float32, 5)
@@ -81,4 +88,5 @@ if __name__ == "__main__":
     print(buffer.get_latest_data())
     print(buffer.get_index_data(2))
     print(buffer.get_index_data([0, 1, 3]))
-    print(buffer.get_index_data(torch.Tensor([0, 1, 3])))
+    print(buffer.get_index_data(torch.Tensor([2, 1, 0])))
+    print(buffer.get_len_data(1))

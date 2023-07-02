@@ -56,3 +56,9 @@ class ObservationBuffer:
 
     def get_index_data_raw(self, indices_from_back: Union[torch.Tensor, List, ListConfig, int]):
         return self.obs_raw_buffer.get_index_data(indices_from_back)
+
+    def get_len_data(self, length: int):
+        return self.obs_noisy_scaled_buffer.get_len_data(length)
+
+    def get_len_data_raw(self, length: int):
+        return self.obs_raw_buffer.get_len_data(length)
