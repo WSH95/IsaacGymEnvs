@@ -69,7 +69,7 @@ class A1(VecTask):
         # threshold
         self.contact_force_threshold = self.cfg["env"]["contactForceThreshold"]
         self.stance_foot_force_threshold = self.cfg["env"]["stanceFootForceThreshold"]
-        self.xy_velocity_threshold = self.cfg["env"]["xyVelocityCommandThreshold"]
+        xy_velocity_threshold_list = self.cfg["env"]["xywVelocityCommandThreshold"]
 
         # default joint positions
         self.named_default_joint_angles = self.cfg["env"]["defaultJointAngles"]
@@ -99,6 +99,13 @@ class A1(VecTask):
         self.rew_scales["action_rate"] = self.cfg["env"]["learn"]["actionRateRewardScale"]
         self.rew_scales["hip"] = self.cfg["env"]["learn"]["hipRewardScale"]
         self.rew_scales["energy"] = self.cfg["env"]["learn"]["energyRewardScale"]
+        self.rew_scales["power"] = self.cfg["env"]["learn"]["powerRewardScale"]
+        self.rew_scales["power_max_mean_each"] = self.cfg["env"]["learn"]["power_max_mean_each"]
+        self.rew_scales["power_max_mean_std"] = self.cfg["env"]["learn"]["power_max_mean_std"]
+        self.rew_scales["feet_max_force_total"] = self.cfg["env"]["learn"]["feet_max_force_total"]
+        self.rew_scales["feet_max_force_std"] = self.cfg["env"]["learn"]["feet_max_force_std"]
+        self.rew_scales["torque_max_mean_each"] = self.cfg["env"]["learn"]["torque_max_mean_each"]
+        self.rew_scales["torque_max_mean_std"] = self.cfg["env"]["learn"]["torque_max_mean_std"]
 
         # randomization
         self.randomization_params = self.cfg["task"]["randomization_params"]
@@ -138,17 +145,22 @@ class A1(VecTask):
             cam_pos = gymapi.Vec3(p[0], p[1], p[2])
             cam_target = gymapi.Vec3(lookat[0], lookat[1], lookat[2])
             self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
+            # pose = gymapi.Transform()
+            # pose.p = gymapi.Vec3(-1, -1, 0)
+            # self.gym.attach_camera_to_body(0, 0, 0, pose, gymapi.CameraFollowMode.FOLLOW_TRANSFORM)
 
         # get gym GPU state tensors
         actor_root_state = self.gym.acquire_actor_root_state_tensor(self.sim)
         dof_state_tensor = self.gym.acquire_dof_state_tensor(self.sim)
         net_contact_forces = self.gym.acquire_net_contact_force_tensor(self.sim)
         sensor_forces = self.gym.acquire_force_sensor_tensor(self.sim)
+        actor_rigid_body_state = self.gym.acquire_rigid_body_state_tensor(self.sim)
 
         self.gym.refresh_dof_state_tensor(self.sim)
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_net_contact_force_tensor(self.sim)
         self.gym.refresh_force_sensor_tensor(self.sim)
+        self.gym.refresh_rigid_body_state_tensor(self.sim)
 
         # create some wrapper tensors for different slices
         self.root_states = gymtorch.wrap_tensor(actor_root_state)
@@ -158,6 +170,12 @@ class A1(VecTask):
         ### wsh_annotation: use force sensor or not
         self.net_contact_forces = gymtorch.wrap_tensor(net_contact_forces)  # shape: num_envs*num_bodies, xyz axis
         self.sensor_forces = gymtorch.wrap_tensor(sensor_forces)
+        self.rigid_body_states = gymtorch.wrap_tensor(actor_rigid_body_state)
+        self.rigid_body_states_reshape = self.rigid_body_states.view(self.num_envs, self.num_bodies, 13)
+        self.feet_position_world = self.rigid_body_states_reshape[:, self.feet_indices, 0:3].view(self.num_envs, -1)
+        self.feet_lin_vel_world = self.rigid_body_states_reshape[:, self.feet_indices, 7:10].view(self.num_envs, -1)
+        self.feet_position_body = torch.zeros_like(self.feet_position_world)
+        self.feet_lin_vel_body = torch.zeros_like(self.feet_lin_vel_world)
 
         if self.cfg["env"]["urdfAsset"]["useForceSensor"]:
             self.contact_forces = self.sensor_forces[:, :3].view(self.num_envs, -1,
@@ -165,20 +183,25 @@ class A1(VecTask):
         else:
             self.contact_forces = self.net_contact_forces.view(self.num_envs, -1,
                                                                3)  # shape: num_envs, num_bodies, xyz axis
+        self.feet_force = self.contact_forces[:, self.feet_indices].view(self.num_envs, -1)
 
         # initialize some data used later on
         self.common_step_counter = 0
+        self.simulate_counter = 0
         self.extras = {}
         # self.noise_scale_vec = self._get_noise_scale_vec(self.cfg) ### wsh_annotation
         self.commands = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device,
                                     requires_grad=False)  # x vel, y vel, yaw vel, heading
         self.commands_scale = torch.tensor([self.lin_vel_scale, self.lin_vel_scale, self.ang_vel_scale],
                                            device=self.device, requires_grad=False, )
+        self.xy_velocity_threshold = torch.tensor(xy_velocity_threshold_list, dtype=torch.float, device=self.device, requires_grad=False)
+
         self.gravity_vec = to_torch(get_axis_params(-1., self.up_axis_idx), device=self.device).repeat(
             (self.num_envs, 1))
         self.forward_vec = to_torch([1., 0., 0.], device=self.device).repeat((self.num_envs, 1))
         self.torques = torch.zeros(self.num_envs, self.num_dof, dtype=torch.float, device=self.device,
                                    requires_grad=False)
+
         self.actions = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device,
                                    requires_grad=False)
         self.last_actions = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device,
@@ -204,7 +227,10 @@ class A1(VecTask):
                              "orient": torch_zeros(), "torques": torch_zeros(), "joint_acc": torch_zeros(),
                              "base_height": torch_zeros(),
                              "air_time": torch_zeros(), "collision": torch_zeros(), "stumble": torch_zeros(),
-                             "action_rate": torch_zeros(), "energy": torch_zeros(), "hip": torch_zeros()}
+                             "action_rate": torch_zeros(), "energy": torch_zeros(), "power": torch_zeros(), "hip": torch_zeros(),
+                             "power_max_mean_each": torch_zeros(), "power_max_mean_std": torch_zeros(),
+                             "feet_max_force_total": torch_zeros(), "feet_max_force_std": torch_zeros(),
+                             "torque_max_mean_each": torch_zeros(), "torque_max_mean_std": torch_zeros()}
 
         self.base_quat = self.root_states[:, 3:7]
         self.base_lin_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
@@ -223,6 +249,11 @@ class A1(VecTask):
         # motion planning command
         self.motion_planning_cmd = torch.zeros(self.num_envs, 28, dtype=torch.float, device=self.device, requires_grad=False)
 
+        # accumulated square state
+        self.torques_square_accumulated = torch.zeros_like(self.torques)
+        self.base_lin_vel_error_square_accumulated = torch.zeros_like(self.base_lin_vel)
+        self.base_ang_vel_error_square_accumulated = torch.zeros_like(self.base_ang_vel)
+
         ### wsh_annotation: observations dict
         self.obs_name_to_value = {"linearVelocity": self.base_lin_vel,
                                   "angularVelocity": self.base_ang_vel,
@@ -231,12 +262,16 @@ class A1(VecTask):
                                   "dofVelocity": self.dof_vel,
                                   "lastAction": self.actions,
                                   "commands": self.commands[:, :3],
-                                  "feetContactState": self.feet_contact_state}
+                                  "feetContactState": self.feet_contact_state,
+                                  "bodyPos": self.root_states[:, :3],
+                                  "motorTorque": self.torques,
+                                  "feetForce": self.feet_force}
         self.obs_combination = self.cfg["env"]["learn"]["observationConfig"]["combination"]
         self.obs_components = self.cfg["env"]["learn"]["observationConfig"]["components"]
         add_obs_noise = self.cfg["env"]["learn"]["observationConfig"]["addNoise"]
         self.obs_buffer_dict = {}
-        for key in self.obs_combination.keys():
+        self.record_items = self.obs_components.keys()
+        for key in self.record_items:
             if add_obs_noise:
                 noise = self.obs_components[key]["noise"]
             else:
@@ -248,13 +283,20 @@ class A1(VecTask):
                                                           device=self.device,
                                                           scale=self.obs_components[key]["scale"],
                                                           noise=noise)
-
+        self.motion_planning_interface = MotionPlanningInterface(self.num_envs, 28, self.device)
+        self.gait_period_offset = torch.zeros_like(self.feet_contact_state)
+        self.gait_duty_cycle_offset = torch.zeros_like(self.feet_contact_state)
+        self.gait_phase_offset = torch.zeros_like(self.feet_contact_state)
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
         self.compute_observations()
         self.init_done = True
 
         self.mit_controller = VecControllerBridge(self.num_envs, self.cfg["num_controller_threads"], self.device)
-        self.motion_planning_interface = MotionPlanningInterface(self.num_envs, 28, self.device)
+        # self.motion_planning_interface = MotionPlanningInterface(self.num_envs, 28, self.device)
+
+        self.record_data = np.expand_dims(np.arange(57), axis=0)
+        self.record_data_test = np.expand_dims(np.arange(116), axis=0)
+        self.record_path = ''
 
     def create_sim(self):
         if self.cfg["sim"]["up_axis"] == "z":
@@ -442,18 +484,11 @@ class A1(VecTask):
         self.timeout_buf[:] = (self.progress_buf >= self.max_episode_length - 1) & (self.reset_buf != 0)
 
     def compute_observations(self):  ### TODO(completed) wsh_annotation: add history buffer and delay. contain terrain info or not.
-        # calculate omega command
-        forward = quat_apply(self.base_quat, self.forward_vec)
-        heading = torch.atan2(forward[:, 1], forward[:, 0])
-        self.commands[:, 2] = self._heading_to_omega(heading)
 
-        # self.commands[:, 0] = 1.0
-        # self.commands[:, 1] = 0.0
-        # self.commands[:, 2] = 0.
 
-        ### wsh_annotation: record new observations into buffer
-        for key in self.obs_combination.keys():
-            self.obs_buffer_dict[key].record(self.obs_name_to_value[key])
+        # ### wsh_annotation: record new observations into buffer
+        # for key in self.record_items:
+        #     self.obs_buffer_dict[key].record(self.obs_name_to_value[key])
 
         tmp_obs_buf = torch.cat([self.obs_buffer_dict[key].get_index_data(self.obs_combination[key]) for key in self.obs_combination.keys()], dim=-1)
 
@@ -482,12 +517,18 @@ class A1(VecTask):
         # velocity tracking reward
         lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
         ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
+        # lin_vel_error = torch.sum(self.base_lin_vel_error_square_accumulated[:, :2], dim=1) / self.decimation
+        # ang_vel_error = self.base_ang_vel_error_square_accumulated[:, 2] / self.decimation
         rew_lin_vel_xy = torch.exp(-lin_vel_error / 0.25) * self.rew_scales["lin_vel_xy"]
         rew_ang_vel_z = torch.exp(-ang_vel_error / 0.25) * self.rew_scales["ang_vel_z"]
 
         # other base velocity penalties
         rew_lin_vel_z = torch.square(self.base_lin_vel[:, 2]) * self.rew_scales["lin_vel_z"]
         rew_ang_vel_xy = torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1) * self.rew_scales["ang_vel_xy"]
+        # rew_lin_vel_z = self.base_lin_vel_error_square_accumulated[:, 2] / self.decimation * self.rew_scales["lin_vel_z"]
+        # rew_ang_vel_xy = torch.sum(self.base_ang_vel_error_square_accumulated[:, :2], dim=1) / self.decimation * self.rew_scales["ang_vel_xy"]
+        self.base_lin_vel_error_square_accumulated[:] = 0
+        self.base_ang_vel_error_square_accumulated[:] = 0
 
         # orientation penalty TODO relating to velocity
         rew_orient = torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1) * self.rew_scales["orient"]
@@ -499,7 +540,9 @@ class A1(VecTask):
         # print(self.root_states[0, 2])
 
         # torque penalty TODO power (torque * motor_speed)
-        rew_torque = torch.sum(torch.square(self.torques), dim=1) * self.rew_scales["torque"]
+        # rew_torque = torch.sum(torch.square(self.torques), dim=1) * self.rew_scales["torque"]
+        rew_torque = torch.sum(self.torques_square_accumulated, dim=1) / self.decimation * self.rew_scales["torque"]
+        self.torques_square_accumulated[:] = 0.0
 
         # joint acc penalty
         rew_joint_acc = torch.sum(torch.square(self.last_dof_vel - self.dof_vel), dim=1) * self.rew_scales["joint_acc"]
@@ -522,8 +565,9 @@ class A1(VecTask):
         first_contact = (self.feet_air_time > 0.) * self.feet_contact_state
         self.feet_air_time += self.dt
         # reward only on first contact with the ground TODO self.feet_air_time - 0.5 ?
-        rew_air_time = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1) * self.rew_scales["air_time"]
-        rew_air_time[:] *= torch.norm(self.commands[:, :2], dim=1) > self.xy_velocity_threshold  # no reward for zero command
+        rew_air_time = torch.sum((self.feet_air_time - 0.15) * first_contact, dim=1) * self.rew_scales["air_time"]
+        # rew_air_time[:] *= torch.norm(self.commands[:, :2], dim=1) > self.xy_velocity_threshold  # no reward for zero command
+        rew_air_time[:] *= ~((self.commands[:, :3].abs() < self.xy_velocity_threshold).all(dim=-1))
         self.feet_air_time *= (~(self.feet_contact_state > 0.5)).to(torch.int)
 
         # energy efficiency penalty
@@ -539,9 +583,76 @@ class A1(VecTask):
         rew_hip = torch.sum(torch.abs(self.dof_pos[:, [0, 3, 6, 9]] - self.default_dof_pos[:, [0, 3, 6, 9]]), dim=1) * \
                   self.rew_scales["hip"]
 
+        # survival reward, ensures that the reward is always positive
+        # rew_survival = self.progress_buf / (self.max_episode_length - 1)
+        rew_survival = 0.01
+
+        body_height_buf = self.obs_buffer_dict["bodyPos"].get_len_data_raw(int(self.decimation))[:, 2, :]
+        lin_vel_buf = self.obs_buffer_dict["linearVelocity"].get_len_data_raw(int(self.decimation))
+        ang_vel_buf = self.obs_buffer_dict["angularVelocity"].get_len_data_raw(int(self.decimation))
+        projectedGravity_buf = self.obs_buffer_dict["projectedGravity"].get_len_data_raw(int(self.decimation))
+        motor_vel_buf = self.obs_buffer_dict["dofVelocity"].get_len_data_raw(int(self.decimation))
+        motor_torque_buf = self.obs_buffer_dict["motorTorque"].get_len_data_raw(int(self.decimation))
+        feet_force_buf = self.obs_buffer_dict["feetForce"].get_len_data_raw(int(self.decimation))
+        v_x_buf = lin_vel_buf[:, 0, :]
+        v_y_buf = lin_vel_buf[:, 1, :]
+        v_z_buf = lin_vel_buf[:, 2, :]
+        v_roll_buf = ang_vel_buf[:, 0, :]
+        v_pitch_buf = ang_vel_buf[:, 1, :]
+        v_yaw_buf = ang_vel_buf[:, 2, :]
+        roll_sin_buf = projectedGravity_buf[:, 0, :]
+        pitch_sin_buf = projectedGravity_buf[:, 1, :]
+        power_mech_buf = motor_torque_buf * motor_vel_buf
+        power_heat_buf = 0.26 * motor_torque_buf * motor_torque_buf
+        power = power_mech_buf + power_heat_buf
+        power = torch.clip(power, min=0., max=None)
+        feet_resultant_force_buf = torch.norm(feet_force_buf.view(self.num_envs, 4, 3, -1), dim=2)
+        # feet_resultant_force_buf = feet_force_buf.view(self.num_envs, 4, 3, -1)[:, :, 2, :]
+        feet_max_force_each = torch.max(feet_resultant_force_buf, dim=2).values
+        feet_max_force_std = torch.std(feet_max_force_each, dim=-1)
+        feet_max_force_total = torch.max(feet_max_force_each, dim=-1).values
+        body_height_mean = torch.mean(body_height_buf, dim=-1)
+        v_x_mean = torch.mean(v_x_buf, dim=-1)
+        v_y_mean = torch.mean(v_y_buf, dim=-1)
+        v_z_mean = torch.mean(v_z_buf, dim=-1)
+        v_roll_mean = torch.mean(v_roll_buf, dim=-1)
+        v_pitch_mean = torch.mean(v_pitch_buf, dim=-1)
+        v_yaw_mean = torch.mean(v_yaw_buf, dim=-1)
+        roll_sin_mean = torch.mean(roll_sin_buf, dim=-1)
+        pitch_sin_mean = torch.mean(pitch_sin_buf, dim=-1)
+        power_mean_each = torch.mean(power, dim=-1)
+        power_mean_total = torch.sum(power_mean_each, dim=-1)
+        power_max_mean_each = torch.max(power_mean_each, dim=-1).values
+        power_max_mean_std = torch.std(power_mean_each[:, [1, 2, 4, 5, 7, 8, 10, 11]], dim=-1)
+        torque_mean_each = torch.norm(motor_torque_buf, dim=-1)
+        torque_max_mean_each = torch.mean(torque_mean_each, dim=-1)
+        torque_max_mean_std = torch.std(torque_mean_each[:, [1, 2, 4, 5, 7, 8, 10, 11]], dim=-1)
+
+
+        # print(f"v_x_mean: {v_x_mean}")
+        # print(f"v_y_mean: {v_y_mean}")
+        # print(f"v_yaw_mean: {v_yaw_mean}")
+        # print(self.obs_buffer_dict["linearVelocity"].get_latest_data_raw()[0][0])
+
+        rew_base_height = torch.square(body_height_mean - self.desired_base_height) * self.rew_scales["base_height"]
+
+        lin_vel_error = torch.square(self.commands[:, 0] - v_x_mean) + torch.square(self.commands[:, 1] - v_y_mean)
+        rew_lin_vel_xy = torch.exp(-lin_vel_error / 0.25) * self.rew_scales["lin_vel_xy"]
+        ang_vel_error = torch.square(self.commands[:, 2] - v_yaw_mean)
+        rew_ang_vel_z = torch.exp(-ang_vel_error / 0.25) * self.rew_scales["ang_vel_z"]
+        rew_power = power_mean_total * self.rew_scales["power"]
+
+        rew_power_max = power_max_mean_each * self.rew_scales["power_max_mean_each"]
+        rew_power_max_std = power_max_mean_std * self.rew_scales["power_max_mean_std"]
+        rew_feet_force_max = feet_max_force_total * self.rew_scales["feet_max_force_total"]
+        rew_feet_force_max_std = feet_max_force_std * self.rew_scales["feet_max_force_std"]
+        rew_torque_max = torque_max_mean_each * self.rew_scales["torque_max_mean_each"]
+        rew_torque_max_std = torque_max_mean_std * self.rew_scales["torque_max_mean_std"]
+
         # total reward
         self.rew_buf = rew_lin_vel_xy + rew_ang_vel_z + rew_lin_vel_z + rew_ang_vel_xy + rew_orient + rew_base_height + \
-                       rew_torque + rew_joint_acc + rew_collision + rew_action_rate + rew_air_time + rew_hip + rew_stumble + rew_energy
+                       rew_torque + rew_joint_acc + rew_collision + rew_action_rate + rew_air_time + rew_hip + rew_stumble + rew_energy + rew_power + rew_survival + \
+                       rew_power_max + rew_power_max_std + rew_feet_force_max + rew_feet_force_max_std + rew_torque_max + rew_torque_max_std
         self.rew_buf = torch.clip(self.rew_buf, min=0., max=None)
 
         # add termination reward
@@ -562,6 +673,13 @@ class A1(VecTask):
         self.episode_sums["base_height"] += rew_base_height
         self.episode_sums["hip"] += rew_hip
         self.episode_sums["energy"] += rew_energy
+        self.episode_sums["power"] += rew_power
+        self.episode_sums["power_max_mean_each"] += rew_power_max
+        self.episode_sums["power_max_mean_std"] += rew_power_max_std
+        self.episode_sums["feet_max_force_total"] += rew_feet_force_max
+        self.episode_sums["feet_max_force_std"] += rew_feet_force_max_std
+        self.episode_sums["torque_max_mean_each"] += rew_torque_max
+        self.episode_sums["torque_max_mean_std"] += rew_torque_max_std
 
     def reset_idx(self, env_ids):
         # Randomization can happen only at reset time, since it can reset actor positions on GPU
@@ -601,7 +719,14 @@ class A1(VecTask):
                                                      (len(env_ids), 1), device=self.device).squeeze()
         self.commands[env_ids, 3] = torch_rand_float(self.command_yaw_range[0], self.command_yaw_range[1],
                                                      (len(env_ids), 1), device=self.device).squeeze()
-        self.commands[env_ids] *= (torch.norm(self.commands[env_ids, :2], dim=1) > self.xy_velocity_threshold).unsqueeze(1)  # set small commands to zero. wsh_annotation: TODO 0.25 ?
+        # self.commands[env_ids, 2] = self.commands[env_ids, 3]
+        # self.commands[env_ids, 1] = 0.
+        # self.commands[env_ids, 2] = 0.
+        # self.commands[env_ids, 0] = 1.0
+        # self.commands[env_ids] *= (torch.norm(self.commands[env_ids, :2], dim=1) > self.xy_velocity_threshold).unsqueeze(1)  # set small commands to zero. wsh_annotation: TODO 0.25 ?
+        self.modify_vel_command()
+        self.commands[env_ids] *= ~((self.commands[env_ids, :3].abs() < self.xy_velocity_threshold).all(dim=-1)).unsqueeze(1)
+        # self.modify_vel_command()
 
         self.last_actions[env_ids] = 0.
         self.last_dof_vel[env_ids] = 0.
@@ -610,14 +735,28 @@ class A1(VecTask):
         # self.reset_buf[env_ids] = 1  ### wsh_annotation: TODO
 
         ### wsh_annotation: TODO(completed) reset to acquire the initial obs_buf
+        # self.gym.simulate(self.sim)
+        # if self.device == 'cpu':
+        #     self.gym.fetch_results(self.sim, True)
         self.gym.refresh_dof_state_tensor(self.sim)
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_net_contact_force_tensor(self.sim)
         self.gym.refresh_force_sensor_tensor(self.sim)
+        self.gym.refresh_rigid_body_state_tensor(self.sim)
         self.base_quat[env_ids] = self.root_states[env_ids, 3:7]
         self.base_lin_vel[env_ids] = quat_rotate_inverse(self.base_quat[env_ids], self.root_states[env_ids, 7:10])
         self.base_ang_vel[env_ids] = quat_rotate_inverse(self.base_quat[env_ids], self.root_states[env_ids, 10:13])
         self.projected_gravity[env_ids] = quat_rotate_inverse(self.base_quat[env_ids], self.gravity_vec[env_ids])
+
+        # b = torch.tensor([0, 1], dtype=torch.long, device=self.device, requires_grad=False)
+        # a = self.rigid_body_states_reshape[b][:, self.feet_indices, :]
+        # aa = a[..., 0:3]
+        # aaa = aa.view(len(env_ids), -1)
+        self.feet_position_world[env_ids] = self.rigid_body_states_reshape[env_ids][:, self.feet_indices, 0:3].reshape(len(env_ids), -1)
+        self.feet_lin_vel_world[env_ids] = self.rigid_body_states_reshape[env_ids][:, self.feet_indices, 7:10].reshape(len(env_ids), -1)
+        for i in range(len(self.feet_indices)):
+            self.feet_position_body[env_ids, i * 3: i * 3 + 3] = quat_rotate_inverse(self.base_quat[env_ids], self.feet_position_world[env_ids, i * 3: i * 3 + 3] - self.root_states[env_ids, 0:3])
+            self.feet_lin_vel_body[env_ids, i * 3: i * 3 + 3] = quat_rotate_inverse(self.base_quat[env_ids],self.feet_lin_vel_world[env_ids, i * 3: i * 3 + 3] - self.root_states[env_ids, 7:10])
 
         # calculate the linear acceleration of the base
         self.base_lin_acc[env_ids] = 0.
@@ -627,11 +766,22 @@ class A1(VecTask):
         self.actions[env_ids] = 0.0
         self.last_actions[env_ids] = 0.0
         self.feet_contact_state[env_ids] = 1
+        self.feet_force[env_ids] = self.contact_forces[env_ids][:, self.feet_indices].reshape(len(env_ids), -1)
 
         self.controller_reset_buf[env_ids] = 1
 
+        # self.gait_period_offset[env_ids] = (torch.zeros_like(self.feet_contact_state) + torch_rand_float(-0.23, 0.1, (self.num_envs, 1), device=self.device))[env_ids]
+        self.gait_period_offset[env_ids] = -0.2
+        self.gait_duty_cycle_offset[env_ids] = (torch.zeros_like(self.feet_contact_state) - 0.0)[env_ids]
+        self.gait_phase_offset[env_ids] = (torch.zeros_like(self.feet_contact_state))[env_ids]
+
+        self.motion_planning_interface.update_gait_planning(True, self.gait_period_offset, self.gait_duty_cycle_offset,
+                                                            self.gait_phase_offset, None)
+        self.motion_planning_interface.update_body_planning(True, None, None, None, None, self.commands[:, :3])
+        self.motion_planning_interface.generate_motion_command()
+
         ### wsh_annotation: reset observation buffer
-        for key in self.obs_combination.keys():
+        for key in self.record_items:
             if key == "commands":  ### wsh_annotation: command history is zero
                 self.obs_buffer_dict[key].reset_and_fill_index(env_ids, torch.zeros(len(env_ids), 3, dtype=torch.float, device=self.device, requires_grad=False))
             else:
@@ -669,18 +819,19 @@ class A1(VecTask):
         self.actions[:] = actions.clone().to(self.device)
         # print(self.actions[:10])
         # self.actions[:, [0, 3, 6, 9]] = 0.
-        # dof_pos_desired = self.actions.clone()
-        # dof_pos_desired[:, [0, 3, 6, 9]] *= 0.8
-        # dof_pos_desired[:, [1, 4, 7, 10]] = 1.325 * dof_pos_desired[:, [1, 4, 7, 10]] - 0.525
-        # dof_pos_desired[:, [2, 5, 8, 11]] = 0.887 * dof_pos_desired[:, [2, 5, 8, 11]] - 0.213
-        dof_pos_desired = self.actions * 2.0
+        dof_pos_desired = self.actions.clone()
+        dof_pos_desired[:, [0, 3, 6, 9]] *= 0.8
+        dof_pos_desired[:, [1, 4, 7, 10]] = 1.325 * dof_pos_desired[:, [1, 4, 7, 10]] - 0.525
+        dof_pos_desired[:, [2, 5, 8, 11]] = 0.887 * dof_pos_desired[:, [2, 5, 8, 11]] - 0.213
+        # dof_pos_desired = self.actions * 2.0
         dof_pos_desired += self.default_dof_pos
         # dof_pos_desired = self.default_dof_pos
         # tt = 15. * self.actions
 
+        # gait_period_offset = torch.zeros_like(self.feet_contact_state)-0.2
         # gait_period_offset = self.actions[:, :4] * 0.3
-        # gait_duty_cycle_offset = self.actions[:, 4:8] * 0.5
-        # gait_phase_offset = self.actions[:, 8:12] * 0.5
+        # gait_duty_cycle_offset = self.actions[:, :4] * 0.5
+        # gait_phase_offset = self.actions[:, 4:8] * 0.5
         # gait_phase_offset[:, 1:3] += 0.5
         # body_height_offset = self.actions * 0.01
         # body_orientation = torch.zeros_like(self.base_ang_vel)
@@ -689,16 +840,20 @@ class A1(VecTask):
         # print(f"body_height_offset: {body_height_offset*1000} mm")
         # print(f"body_height_real: {(self.root_states[:, 2] - 0.3) * 1000} mm")
 
-        # gait_period_offset = torch.zeros_like(self.feet_contact_state) - 0.2
+        # gait_period_offset = torch.zeros_like(self.feet_contact_state) + (torch.rand(self.num_envs, 1, dtype=float, device=self.device) * 2 - 1) * 0.2
         # gait_duty_cycle_offset = torch.zeros_like(self.feet_contact_state)-0.0
         # gait_phase_offset = torch.zeros_like(self.feet_contact_state)
 
+        # body_height_offset = torch.zeros(self.num_envs, 1, dtype=torch.float, device=self.device, requires_grad=False)
+        # body_orientation = torch.zeros_like(self.base_ang_vel)
+
         # self.motion_planning_interface.update_gait_planning(True, gait_period_offset, gait_duty_cycle_offset, gait_phase_offset, None)
-        # self.motion_planning_interface.update_body_planning(True, body_height_offset, body_orientation, None, None, self.commands[:, :3])
+        # self.motion_planning_interface.update_body_planning(True, None, None, None, None, self.commands[:, :3])
         # self.motion_planning_interface.generate_motion_command()
 
         # print(self.base_lin_vel[0][0])
         # print("gait_duty_cycle", (gait_duty_cycle_offset + 0.5)[0])
+        # print("gait_phase_offset", gait_phase_offset[0])
 
         torques = torch.zeros_like(self.torques)
         for i in range(self.decimation - 1):
@@ -706,8 +861,10 @@ class A1(VecTask):
             # self.motion_planning_interface.change_gait_planning(False)
             # self.motion_planning_interface.change_body_planning(False)
             # torques[:] = tt
-            # torques = torch.clip(torques, -33.5, 33.5)
+
             torques = torch.clip(self.Kp * (dof_pos_desired - self.dof_pos) - self.Kd * self.dof_vel, -33.5, 33.5)
+            # torques = torch.clip(torques, -33.5, 33.5)
+
             tmp_max_torque = torch.clip(79.17 - 3.953886 * self.dof_vel, 0, 33.5)
             tmp_min_torque = torch.clip(-79.17 - 3.953886 * self.dof_vel, -33.5, 0)
             torques[:] = torch.where(self.dof_vel > 11.55, torch.clip(torques, -33.5 * torch.ones_like(torques), tmp_max_torque), torques)
@@ -715,16 +872,23 @@ class A1(VecTask):
             # print("torques: ", torques)
             # torques = torch.zeros_like(torques)
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
+            self.torques[:] = torques.clone()
             # self.torques = torques.view(self.torques.shape)
+            if i % 10 == 0 and self.force_render:
+                self.render()
             self.gym.simulate(self.sim)
             if self.device == 'cpu':
                 self.gym.fetch_results(self.sim, True)
             # self.gym.refresh_dof_state_tensor(self.sim)
             self.update_pre_state()
+            self.torques_square_accumulated += torch.square(torques)
+            # self.record_state_test()
         # torques[:] = self.mit_controller.get_torque(self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state, self.motion_planning_interface.get_motion_command())
         # torques[:] = tt
-        # torques = torch.clip(torques, -33.5, 33.5)
+
         torques = torch.clip(self.Kp * (dof_pos_desired - self.dof_pos) - self.Kd * self.dof_vel, -33.5, 33.5)
+        # torques = torch.clip(torques, -33.5, 33.5)
+        # torques = torch.clip(self.Kp * (dof_pos_desired - self.dof_pos) - self.Kd * self.dof_vel, -33.5, 33.5)
         tmp_max_torque = torch.clip(79.17 - 3.953886 * self.dof_vel, 0, 33.5)
         tmp_min_torque = torch.clip(-79.17 - 3.953886 * self.dof_vel, -33.5, 0)
         torques[:] = torch.where(self.dof_vel > 11.55,
@@ -734,7 +898,10 @@ class A1(VecTask):
         # print("torques: ", torques)
         # torques = torch.zeros_like(torques)
         self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
-        self.torques = torques.view(self.torques.shape)
+        self.torques[:] = torques.clone()
+        # self.record_state()
+        self.torques_square_accumulated += torch.square(torques)
+        # self.record_state_test()
 
     def post_physics_step(self):
         # self.gym.refresh_dof_state_tensor(self.sim)
@@ -745,8 +912,8 @@ class A1(VecTask):
         self.progress_buf += 1
         self.randomize_buf += 1
         self.common_step_counter += 1
-        if self.push_flag and self.common_step_counter % self.push_interval == 0:  ### wsh_annotation: self.push_interval > 0
-            self.push_robots()
+        # if self.push_flag and self.common_step_counter % self.push_interval == 0:  ### wsh_annotation: self.push_interval > 0
+        #     self.push_robots()
 
         # # prepare quantities
         # self.base_quat[:] = self.root_states[:, 3:7]
@@ -764,7 +931,12 @@ class A1(VecTask):
         if len(env_ids) > 0:
             self.reset_idx(env_ids)
 
+        # modify vel command
+        self.modify_vel_command()
         self.compute_observations()
+
+        if self.push_flag and self.common_step_counter % self.push_interval == 0:  ### wsh_annotation: self.push_interval > 0
+            self.push_robots()
 
         ### wsh_annotation
         # if self.add_noise:
@@ -842,17 +1014,112 @@ class A1(VecTask):
     # def get_base_ang_vel(self):
     #     return self.base_ang_vel
 
+    def record_state(self):
+        record_path = "/home/wsh/Documents/record_data/imitation/imitation_mpc_data_walk_2.csv"
+        if self.common_step_counter == 0:
+            if os.path.exists(record_path):
+                os.remove(record_path)
+            with open(record_path, 'a+') as fp:
+                fp.write("gait type: walk, duty: 0.5, phase offset: (0, 0.3, 0.5, 0.8)" + '\n')
+                fp.write("(0 ~ 3): gait period(s)" + '\n')
+                fp.write("(0 ~ 3): gait period(s)" + '\n')
+                fp.write("(4 ~ 6): body linear velocity(m/s)" + '\n')
+                fp.write("(7 ~ 9): body angular velocity(rad/s)" + '\n')
+                fp.write("(10~13): body quaternion(x, y, z, w)" + '\n')
+                fp.write("(14~25): joint position(rad)" + '\n')
+                fp.write("(26~37): joint velocities(rad/s)" + '\n')
+                fp.write("(38~41): feet contact state(1->contact)" + '\n')
+                fp.write("(42~44): velocity command(vx, vy, omega)" + '\n')
+                fp.write("(45~56): torque command(Nm)" + '\n\n')
+
+        data = torch.cat((self.gait_period_offset + 0.5,
+                          self.base_lin_vel,
+                          self.base_ang_vel,
+                          self.base_quat,
+                          self.dof_pos,
+                          self.dof_vel,
+                          self.feet_contact_state,
+                          self.commands[:, :3],
+                          self.torques), dim=-1).cpu().numpy()
+        self.record_data = np.concatenate((self.record_data, data), axis=0)
+
+        if self.common_step_counter >= 500 - 1:
+            with open(record_path, 'a+') as fp:
+                np.savetxt(fp, self.record_data, delimiter=",")
+            exit(0)
+
+    def record_state_test(self):
+        if self.common_step_counter == 0 and self.record_path == '':
+            record_dir = os.path.join('/home/wsh/Documents/pyProjects/IsaacGymEnvs/isaacgymenvs/runs', 'A1_gait/record_test_data')
+            os.makedirs(record_dir, exist_ok=True)
+            file_name = generate_filename('record_data')
+            self.record_path = os.path.join(record_dir, file_name)
+            with open(self.record_path, 'a+') as fp:
+                fp.write("[0:3]:     body position(m)" + '\n')
+                fp.write("[3:7]:     body quaternion(x, y, z, w)" + '\n')
+                fp.write("[7:10]:    body linear velocity(m/s)" + '\n')
+                fp.write("[10:13]:   body angular velocity(rad/s)" + '\n')
+                fp.write("[13:25]:   joint position(rad)" + '\n')
+                fp.write("[25:37]:   joint velocities(rad/s)" + '\n')
+                fp.write("[37:49]:   feet position world(m)" + '\n')
+                fp.write("[49:61]:   feet velocity world(m/s)" + '\n')
+                fp.write("[61:73]:   feet position body(m)" + '\n')
+                fp.write("[73:85]:   feet velocity body(m/s)" + '\n')
+                fp.write("[85:97]:   feet contact force(N)" + '\n')
+                fp.write("[97:101]:  feet contact state(1->contact)" + '\n')
+                fp.write("[101:104]: velocity command(vx, vy, omega)" + '\n')
+                fp.write("[104:116]: torque command(Nm)" + '\n\n')
+
+        data = torch.cat((self.root_states[:, :3],
+                          self.base_quat,
+                          self.base_lin_vel,
+                          self.base_ang_vel,
+                          self.dof_pos,
+                          self.dof_vel,
+                          self.feet_position_world,
+                          self.feet_lin_vel_world,
+                          self.feet_position_body,
+                          self.feet_lin_vel_body,
+                          self.feet_force,
+                          self.feet_contact_state,
+                          self.commands[:, :3],
+                          self.torques), dim=-1).cpu().numpy()
+        self.record_data_test = np.concatenate((self.record_data_test, data), axis=0)
+
+        if self.common_step_counter >= 100 - 1:
+            with open(self.record_path, 'a+') as fp:
+                np.savetxt(fp, self.record_data_test, delimiter=",")
+            exit(0)
+
     def update_pre_state(self):
         self.gym.refresh_dof_state_tensor(self.sim)
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_net_contact_force_tensor(self.sim)
         self.gym.refresh_force_sensor_tensor(self.sim)
+        self.gym.refresh_rigid_body_state_tensor(self.sim)
+
+        self.simulate_counter += 1
 
         self.base_quat[:] = self.root_states[:, 3:7]
         self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
         self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
 
+        self.feet_position_world[:] = self.rigid_body_states_reshape[:, self.feet_indices, 0:3].view(self.num_envs, -1)
+        self.feet_lin_vel_world[:] = self.rigid_body_states_reshape[:, self.feet_indices, 7:10].view(self.num_envs, -1)
+        # self.feet_position_body[:] = quat_rotate_inverse(self.base_quat, self.feet_position_world - self.root_states[:, 0:3])
+        # self.feet_lin_vel_body[:] = quat_rotate_inverse(self.base_quat, self.feet_lin_vel_world - self.root_states[:, 7:10])
+        for i in range(len(self.feet_indices)):
+            self.feet_position_body[:, i * 3: i * 3 + 3] = quat_rotate_inverse(self.base_quat,
+                                                                                     self.feet_position_world[:,
+                                                                                     i * 3: i * 3 + 3] - self.root_states[
+                                                                                                         :, 0:3])
+            self.feet_lin_vel_body[:, i * 3: i * 3 + 3] = quat_rotate_inverse(self.base_quat,
+                                                                                    self.feet_lin_vel_world[:,
+                                                                                    i * 3: i * 3 + 3] - self.root_states[
+                                                                                                        :, 7:10])
+
+        self.feet_force[:] = self.contact_forces[:, self.feet_indices].view(self.num_envs, -1)
         self.feet_contact_state[:] = self.contact_forces[:, self.feet_indices, 2] > self.stance_foot_force_threshold
 
         self.base_lin_acc[:] = quat_rotate_inverse(self.base_quat, ((self.root_states[:,
@@ -861,9 +1128,51 @@ class A1(VecTask):
 
         self.controller_reset_buf[:] = 0
 
+        self.base_lin_vel_error_square_accumulated += torch.square(self.tmp_lin_vel_command - self.base_lin_vel)
+        self.base_ang_vel_error_square_accumulated += torch.square(self.tmp_ang_vel_command - self.base_ang_vel)
+
+        self.record_states_into_buffer()
+
         # print("lin acc: ", self.base_lin_acc)
         # print("last vel:", self.last_base_lin_vel_rel_world)
-        # print(f"body_height_real: {(self.root_states[:, 2] - 0.3) * 1000} mm")
+        # print(f"body_height_real: {(self.root_states[0, 2] - 0.3) * 1000} mm")
+        # print(f"base_lin_vel: {self.base_lin_vel[0]}")
+        # print(f"joint_vel: {self.dof_vel[0]}")
+        # print(f"torque: {self.torques[0]}")
+
+    def modify_vel_command(self):
+        # calculate omega command
+        forward = quat_apply(self.base_quat, self.forward_vec)
+        heading = torch.atan2(forward[:, 1], forward[:, 0])
+        self.commands[:, 2] = self._heading_to_omega(heading)
+
+        # self.commands[:, 0] = 1.0
+        self.commands[:, 1] = 0.0
+        self.commands[:, 2] = 0.0
+
+        n = 100  # 3000
+        count = self.common_step_counter % n
+        if count > n // 2:
+            count = n - count
+        self.commands[:, 0] = 0.06 * count  # 0.002
+        # print(count)
+        # self.commands[:, 0] = 0
+
+        # self.commands[:, 0] = torch_rand_float(self.command_x_range[0], self.command_x_range[1], (self.num_envs, 1),
+        #                                        device=self.device).squeeze()
+        # self.commands[:, 0] = 2
+        # self.commands[:] *= ~((self.commands[:, :3].abs() < self.xy_velocity_threshold).all(dim=-1)).unsqueeze(1)
+        self.tmp_lin_vel_command = self.commands[:, :3].clone()
+        self.tmp_lin_vel_command[:, 2] = 0
+        self.tmp_ang_vel_command = self.commands[:, :3].clone()
+        self.tmp_ang_vel_command[:, :2] = 0
+
+        # self.obs_buffer_dict["commands"].record(self.obs_name_to_value["commands"])
+
+    def record_states_into_buffer(self):
+        ### wsh_annotation: record new states into buffer
+        for key in self.record_items:
+            self.obs_buffer_dict[key].record(self.obs_name_to_value[key])
 
 # terrain generator
 from isaacgym.terrain_utils import *
@@ -1157,3 +1466,14 @@ def wrap_to_pi(angles):
     angles %= 2 * np.pi
     angles -= 2 * np.pi * (angles > np.pi)
     return angles
+
+
+def generate_filename(prefix):
+    import datetime
+    # 获取当前时间
+    now = datetime.datetime.now()
+    # 将时间格式化为字符串，例如：2022-01-01-12-30-00
+    timestamp = now.strftime("%Y-%m-%d-%H-%M-%S")
+    # 将前缀和时间戳拼接成文件名
+    filename = f"{prefix}_{timestamp}.csv"
+    return filename
