@@ -90,7 +90,9 @@ class Anymal(VecTask):
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
         # other
-        self.dt = self.sim_params.dt
+        # self.dt = self.sim_params.dt
+        self.decimation = self.cfg["env"]["control"]["decimation"]
+        self.dt = self.decimation * self.cfg["sim"]["dt"]
         self.max_episode_length_s = self.cfg["env"]["learn"]["episodeLength_s"]
         self.max_episode_length = int(self.max_episode_length_s / self.dt + 0.5)
         self.Kp = self.cfg["env"]["control"]["stiffness"]
@@ -201,7 +203,7 @@ class Anymal(VecTask):
 
         dof_props = self.gym.get_asset_dof_properties(anymal_asset)
         for i in range(self.num_dof):
-            dof_props['driveMode'][i] = gymapi.DOF_MODE_POS
+            dof_props['driveMode'][i] = gymapi.DOF_MODE_EFFORT  # gymapi.DOF_MODE_POS
             dof_props['stiffness'][i] = self.cfg["env"]["control"]["stiffness"] #self.Kp
             dof_props['damping'][i] = self.cfg["env"]["control"]["damping"] #self.Kd
 
@@ -228,8 +230,25 @@ class Anymal(VecTask):
 
     def pre_physics_step(self, actions):
         self.actions = actions.clone().to(self.device)
-        targets = self.action_scale * self.actions + self.default_dof_pos
-        self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(targets))
+        # targets = self.action_scale * self.actions + self.default_dof_pos
+        # self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(targets))
+
+        targets = self.actions.clone()
+        targets[:, [0, 3, 6, 9]] *= 0.8
+        targets[:, [1, 4, 7, 10]] = 1.325 * targets[:, [1, 4, 7, 10]] - 0.525
+        targets[:, [2, 5, 8, 11]] = 0.887 * targets[:, [2, 5, 8, 11]] - 0.213
+        # dof_pos_desired = self.actions * 2.0
+        targets += self.default_dof_pos
+
+        for i in range(self.decimation):
+            torques = torch.clip(self.Kp*(targets - self.dof_pos) - self.Kd*self.dof_vel,
+                                 -80., 80.)
+            self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
+            self.torques = torques.view(self.torques.shape)
+            self.gym.simulate(self.sim)
+            if self.device == 'cpu':
+                self.gym.fetch_results(self.sim, True)
+            self.gym.refresh_dof_state_tensor(self.sim)
 
     def post_physics_step(self):
         self.progress_buf += 1
@@ -305,6 +324,10 @@ class Anymal(VecTask):
         self.commands_x[env_ids] = torch_rand_float(self.command_x_range[0], self.command_x_range[1], (len(env_ids), 1), device=self.device).squeeze()
         self.commands_y[env_ids] = torch_rand_float(self.command_y_range[0], self.command_y_range[1], (len(env_ids), 1), device=self.device).squeeze()
         self.commands_yaw[env_ids] = torch_rand_float(self.command_yaw_range[0], self.command_yaw_range[1], (len(env_ids), 1), device=self.device).squeeze()
+
+        # self.commands_x[env_ids] = 0.5
+        # self.commands_y[env_ids] = 0.0
+        # self.commands_yaw[env_ids] = 0.0
 
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 1

@@ -2,18 +2,18 @@
 # Task name - used to pick the class to load
 task_name: ${task.name}
 # experiment name. defaults to name of training config
-experiment: 'A1_joint_angle_3'
+experiment: 'Anymal_effort_5'
 
 # if set to positive integer, overrides the default number of environments
 num_envs: ''
 
 # seed - set to -1 to choose random seed
-seed: 42
+seed: 42 # 42
 # set to True for deterministic performance
 torch_deterministic: False
 
 # set the maximum number of learning iterations to train for. overrides default per-environment setting
-max_iterations: ''
+max_iterations: 3000 # ''
 
 ## Device config
 #  'physx' or 'flex'
@@ -35,7 +35,7 @@ num_subscenes: 16 # Splits the simulation into N physics scenes and runs each on
 # test - if set, run policy in inference mode (requires setting checkpoint to load)
 test: False
 # used to set checkpoint path
-checkpoint: '' # runs/A1/nn/A1.pth runs/A1_standstill/nn/A1_standstill.pth runs/A1_trot_1/nn/A1_trot_1.pth
+checkpoint: 'runs/Anymal_effort_5/nn/last_Anymal_effort_5_ep_1000_rew_56.362167.pth' # runs/A1/nn/A1.pth runs/A1_standstill/nn/A1_standstill.pth runs/A1_trot_1/nn/A1_trot_1.pth
 # set to True to use multi-gpu horovod training
 multi_gpu: False
 

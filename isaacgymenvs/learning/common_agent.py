@@ -45,6 +45,7 @@ from rl_games.common import vecenv
 
 import torch
 from torch import optim
+from torch import nn
 
 from . import amp_datasets as amp_datasets
 

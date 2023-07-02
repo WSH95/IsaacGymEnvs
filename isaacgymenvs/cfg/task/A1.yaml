@@ -1,14 +1,14 @@
 # used to create the object
 name: A1
 
-description: "action->joint angle 3. no given fixed velocities."
+description: "A1_joint_angle_6. 20230629_10-59"
 
 physics_engine: 'physx'
 num_controller_threads: 26
 
 env:
   numEnvs: ${resolve_default:4096,${...num_envs}}
-  numObservations: 52 # 52 # 163
+  numObservations: 52 # 418 # 48 # 52 # 163
   numActions: 12
   envSpacing: 3.  # [m]
   enableDebugVis: false
@@ -29,7 +29,7 @@ env:
   # threshold
   contactForceThreshold: 5.0
   stanceFootForceThreshold: 25.0
-  xyVelocityCommandThreshold: 0.05
+  xywVelocityCommandThreshold: [ 0.1, 0.05, 0.1 ] # [ 0.1, 0.05, 0.1 ]
 
   baseInitState:
     pos: [ 0.0, 0.0, 0.30001 ] # x,y,z [m] 0.28
@@ -77,74 +77,81 @@ env:
 
   randomCommandVelocityRanges:
     # train
-    linear_x: [ -3., 3. ] # min max [m/s]
-    linear_y: [ -1., 1. ]   # min max [m/s]
-    yaw: [ -3.14, 3.14 ]    # min max [rad/s]
+    linear_x: [ -2., 2. ] # min max [m/s]
+    linear_y: [ -0.5, 0.5 ]   # min max [m/s]
+    yaw: [ -2, 2 ]    # min max [rad/s]
 
   control:
     # PD Drive parameters:
     stiffness: 80.0  # [N*m/rad]
     damping: 2.0     # [N*m*s/rad]
     # action scale: target angle = actionScale * action + defaultAngle
-    actionScale: 1.5
+    actionScale: 1.0
     # decimation: Number of control action updates @ sim DT per policy DT
-    decimation: 1 # 4
+    decimation: 10 # 4
 
   learn:
     allowKneeContacts: false
     # rewards
-    terminalReward: -0.1
-    linearVelocityXYRewardScale: 5.0
-    linearVelocityZRewardScale: -1.0
-    angularVelocityXYRewardScale: -0.001
-    angularVelocityZRewardScale: 5.0 # 0.5
-    orientationRewardScale: -1. #-1.
-    torqueRewardScale: -0.00002 # -0.000025
+    terminalReward: 0
+    linearVelocityXYRewardScale: 5.0 # 5.0
+    linearVelocityZRewardScale: -0.0 # -1.0
+    angularVelocityXYRewardScale: -0.00
+    angularVelocityZRewardScale: 3.0 # 5.0 # 0.5
+    orientationRewardScale: -0. #-1.
+    torqueRewardScale: -0.000 # -0.000025
     jointAccRewardScale: -0.000 # -0.0005 -0.0025
-    baseHeightRewardScale: -0.2 #5
-    feetAirTimeRewardScale: 0.0 # 1.0
-    kneeCollisionRewardScale: -0.05 # -0.25
+    baseHeightRewardScale: -100 # -0.2, 5
+    feetAirTimeRewardScale: 30.0 # 1.0
+    kneeCollisionRewardScale: -0.0 # -0.05 # -0.25
     feetStumbleRewardScale: -0. #-2.0
     actionRateRewardScale: -0.01 #-0.01
     energyRewardScale: -0.0 # -0.02
+    powerRewardScale: -0.00025 # -0.0025
+    power_max_mean_each: -0 # -0.001
+    power_max_mean_std: -0 # -0.001
+    feet_max_force_total: -0 # -0.001
+    feet_max_force_std: -0 # -0.001
+    torque_max_mean_each: -0 # -0.01
+    torque_max_mean_std: -0 # -0.01
     # cosmetics
     hipRewardScale: -0. #25
 
     observationConfig:
       addNoise: false
       combination:
-        linearVelocity: 0 # [ 0, 1, 4, 8 ] # size -> 3
-        angularVelocity: 0 # [ 0, 1, 4, 8 ] # size -> 3
-        projectedGravity: 0 # [ 0, 1, 4, 8 ] # size -> 3
-        dofPosition: 0 # [ 0, 1, 4, 8 ] # size -> 12
-        dofVelocity: 0 # [ 0, 1, 4, 8 ] # size -> 12
-        feetContactState: 0 # [ 0, 1, 4, 8 ] # size -> 4
-        lastAction: 0 # size -> 12
+        linearVelocity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
+        angularVelocity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
+        projectedGravity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
+        dofPosition: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
+        dofVelocity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
+        feetContactState: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 4
+        lastAction: 0 # size -> 8
         commands: 0 # size -> 3
       components:
         linearVelocity:
           size: 3
-          bufferLength: 10
+          bufferLength: 151
           scale: 0.3
           noise: 0.02
         angularVelocity:
           size: 3
-          bufferLength: 10
+          bufferLength: 151
           scale: 0.3
           noise: 0.002
         projectedGravity:
           size: 3
-          bufferLength: 10
+          bufferLength: 151
           scale: 1.0
           noise: 0.05
         dofPosition:
           size: 12
-          bufferLength: 10
+          bufferLength: 151
           scale: 1.0
           noise: 0.002
         dofVelocity:
           size: 12
-          bufferLength: 10
+          bufferLength: 151
           scale: 0.05
           noise: 0.2
         commands:
@@ -159,14 +166,35 @@ env:
           noise: 0
         feetContactState:
           size: 4
-          bufferLength: 10
+          bufferLength: 151
           scale: 1.0
           noise: 0
-        heightMeasurement:
-          size: 0
-          bufferLength: 1
-          scale: 5.0
-          noise: 0.06
+#        heightMeasurement:
+#          size: 0
+#          bufferLength: 1
+#          scale: 5.0
+#          noise: 0.06
+
+        bodyPos:
+          size: 3
+          bufferLength: 151
+          scale: 1.0
+          noise: 0
+#        bodyOri:
+#          size: 3
+#          bufferLength: 150
+#          scale: 1.0
+#          noise: 0
+        motorTorque:
+          size: 12
+          bufferLength: 151
+          scale: 1.0
+          noise: 0
+        feetForce:
+          size: 12
+          bufferLength: 151
+          scale: 1.0
+          noise: 0
 
     # normalization
     linearVelocityScale: 2.0
@@ -190,7 +218,7 @@ env:
     frictionRange: [ 0.5, 1.25 ]
     restitutionRange: [ 0.0, 0.5 ]
     pushRobots: false
-    pushInterval_s: 1
+    pushInterval_s: 3
 
     # episode length in seconds
     episodeLength_s: 30

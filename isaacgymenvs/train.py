@@ -148,10 +148,12 @@ def launch_rlg_hydra(cfg: DictConfig):
     runner.reset()
 
     # dump config dict
-    experiment_dir = os.path.join('runs', cfg.train.params.config.name)
-    os.makedirs(experiment_dir, exist_ok=True)
-    with open(os.path.join(experiment_dir, 'config.yaml'), 'w') as f:
-        f.write(OmegaConf.to_yaml(cfg))
+    if not cfg.test:
+        experiment_dir = os.path.join('runs', cfg.train.params.config.name)
+        os.makedirs(experiment_dir, exist_ok=True)
+        with open(os.path.join(experiment_dir, 'config.yaml'), 'w') as f:
+            f.write(OmegaConf.to_yaml(cfg))
+
 
     runner.run({
         'train': not cfg.test,
