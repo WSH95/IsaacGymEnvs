@@ -128,6 +128,7 @@
       <origin rpy="0 0 0" xyz="-0.003574 0.019529 -0.030323"/>
       <mass value="0.888"/>
       <inertia ixx="0.005251806" ixy="2.168e-06" ixz="0.000346889" iyy="0.005000475" iyz="2.8174e-05" izz="0.0011102"/>
+<!--      <inertia ixx="0.015251806" ixy="2.168e-06" ixz="0.000346889" iyy="0.015000475" iyz="2.8174e-05" izz="0.0011102"/>-->
     </inertial>
   </link>
 
@@ -158,6 +159,7 @@
       <origin rpy="0 0 0" xyz="0.007105 -0.000239 -0.096933"/>
       <mass value="0.151"/>
       <inertia ixx="0.002344758" ixy="0.0" ixz="-0.000141275" iyy="0.002360755" iyz="0.0" izz="3.1158e-05"/>
+<!--      <inertia ixx="0.004344758" ixy="0.0" ixz="-0.000141275" iyy="0.004360755" iyz="0.0" izz="3.1158e-05"/>-->
     </inertial>
   </link>
 
@@ -179,6 +181,7 @@
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
         <sphere radius="0.02"/>
+<!--        <mesh filename="../meshes_old/SphereMeshed001.obj"  scale="1 1 1" />-->
       </geometry>
     </collision>
     <inertial>
@@ -244,6 +247,7 @@
       <origin rpy="0 0 0" xyz="-0.003574 -0.019529 -0.030323"/>
       <mass value="0.888"/>
       <inertia ixx="0.005251806" ixy="-2.168e-06" ixz="0.000346889" iyy="0.005000475" iyz="-2.8174e-05" izz="0.0011102"/>
+<!--      <inertia ixx="0.015251806" ixy="-2.168e-06" ixz="0.000346889" iyy="0.015000475" iyz="-2.8174e-05" izz="0.0011102"/>-->
     </inertial>
   </link>
 
@@ -274,6 +278,7 @@
       <origin rpy="0 0 0" xyz="0.007105 -0.000239 -0.096933"/>
       <mass value="0.151"/>
       <inertia ixx="0.002344758" ixy="0.0" ixz="-0.000141275" iyy="0.002360755" iyz="0.0" izz="3.1158e-05"/>
+<!--      <inertia ixx="0.004344758" ixy="0.0" ixz="-0.000141275" iyy="0.004360755" iyz="0.0" izz="3.1158e-05"/>-->
     </inertial>
   </link>
 
@@ -295,6 +300,7 @@
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
         <sphere radius="0.02"/>
+<!--        <mesh filename="../meshes_old/SphereMeshed001.obj"  scale="1 1 1" />-->
       </geometry>
     </collision>
     <inertial>
@@ -360,6 +366,7 @@
       <origin rpy="0 0 0" xyz="-0.003574 0.019529 -0.030323"/>
       <mass value="0.888"/>
       <inertia ixx="0.005251806" ixy="2.168e-06" ixz="0.000346889" iyy="0.005000475" iyz="2.8174e-05" izz="0.0011102"/>
+<!--      <inertia ixx="0.015251806" ixy="2.168e-06" ixz="0.000346889" iyy="0.015000475" iyz="2.8174e-05" izz="0.0011102"/>-->
     </inertial>
   </link>
 
@@ -390,6 +397,7 @@
       <origin rpy="0 0 0" xyz="0.007105 -0.000239 -0.096933"/>
       <mass value="0.151"/>
       <inertia ixx="0.002344758" ixy="0.0" ixz="-0.000141275" iyy="0.002360755" iyz="0.0" izz="3.1158e-05"/>
+<!--      <inertia ixx="0.004344758" ixy="0.0" ixz="-0.000141275" iyy="0.004360755" iyz="0.0" izz="3.1158e-05"/>-->
     </inertial>
   </link>
 
@@ -411,6 +419,7 @@
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
         <sphere radius="0.02"/>
+<!--        <mesh filename="../meshes_old/SphereMeshed001.obj"  scale="1 1 1" />-->
       </geometry>
     </collision>
     <inertial>
@@ -476,6 +485,7 @@
       <origin rpy="0 0 0" xyz="-0.003574 -0.019529 -0.030323"/>
       <mass value="0.888"/>
       <inertia ixx="0.005251806" ixy="-2.168e-06" ixz="0.000346889" iyy="0.005000475" iyz="-2.8174e-05" izz="0.0011102"/>
+<!--      <inertia ixx="0.015251806" ixy="-2.168e-06" ixz="0.000346889" iyy="0.015000475" iyz="-2.8174e-05" izz="0.0011102"/>-->
     </inertial>
   </link>
 
@@ -506,6 +516,7 @@
       <origin rpy="0 0 0" xyz="0.007105 -0.000239 -0.096933"/>
       <mass value="0.151"/>
       <inertia ixx="0.002344758" ixy="0.0" ixz="-0.000141275" iyy="0.002360755" iyz="0.0" izz="3.1158e-05"/>
+<!--      <inertia ixx="0.004344758" ixy="0.0" ixz="-0.000141275" iyy="0.004360755" iyz="0.0" izz="3.1158e-05"/>-->
     </inertial>
   </link>
 
@@ -527,6 +538,7 @@
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
         <sphere radius="0.02"/>
+<!--        <mesh filename="../meshes_old/SphereMeshed001.obj"  scale="1 1 1" />-->
       </geometry>
     </collision>
     <inertial>

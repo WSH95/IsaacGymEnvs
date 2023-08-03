@@ -2,26 +2,26 @@
 # Task name - used to pick the class to load
 task_name: ${task.name}
 # experiment name. defaults to name of training config
-experiment: 'Anymal_effort_5'
+experiment: ''
 
 # if set to positive integer, overrides the default number of environments
 num_envs: ''
 
 # seed - set to -1 to choose random seed
-seed: 42 # 42
+seed: 42
 # set to True for deterministic performance
 torch_deterministic: False
 
 # set the maximum number of learning iterations to train for. overrides default per-environment setting
-max_iterations: 3000 # ''
+max_iterations: 5000
 
 ## Device config
 #  'physx' or 'flex'
 physics_engine: 'physx'
 # whether to use cpu or gpu pipeline
-pipeline: 'gpu' # 'gpu'
+pipeline: 'gpu'
 # device for running physics simulation
-sim_device: 'cuda:0' # 'cuda:0'
+sim_device: 'cuda:0'
 # device to run RL
 rl_device: 'cuda:0'
 graphics_device_id: 0
@@ -35,8 +35,12 @@ num_subscenes: 16 # Splits the simulation into N physics scenes and runs each on
 # test - if set, run policy in inference mode (requires setting checkpoint to load)
 test: False
 # used to set checkpoint path
-checkpoint: 'runs/Anymal_effort_5/nn/last_Anymal_effort_5_ep_1000_rew_56.362167.pth' # runs/A1/nn/A1.pth runs/A1_standstill/nn/A1_standstill.pth runs/A1_trot_1/nn/A1_trot_1.pth
-# set to True to use multi-gpu horovod training
+checkpoint: ''
+# used to initialize the actor net
+actor_init: ''
+# set sigma when restoring network
+sigma: ''
+# set to True to use multi-gpu training
 multi_gpu: False
 
 wandb_activate: False
@@ -44,6 +48,9 @@ wandb_group: ''
 wandb_name: ${train.params.config.name}
 wandb_entity: ''
 wandb_project: 'isaacgymenvs'
+wandb_tags: []
+wandb_logcode_dir: ''
+
 capture_video: False
 capture_video_freq: 1464
 capture_video_len: 100
@@ -57,10 +64,10 @@ defaults:
   - task: Ant
   - train: ${task}PPO
   - hydra/job_logging: disabled
+  - pbt: no_pbt
 
 # set the directory where the output files get saved
 hydra:
   output_subdir: null
   run:
     dir: .
-

@@ -1,18 +1,19 @@
 # used to create the object
 name: A1
 
-description: "A1_joint_angle_6. 20230629_10-59"
+description: "Minimizing Energy Consumption Leads to the Emergence of Gaits in Legged Robots"
 
 physics_engine: 'physx'
 num_controller_threads: 26
 
 env:
   numEnvs: ${resolve_default:4096,${...num_envs}}
-  numObservations: 52 # 418 # 48 # 52 # 163
+  numObservations: 42 # 418 # 48 # 52 # 163
   numActions: 12
-  envSpacing: 3.  # [m]
+  envSpacing: 4.  # [m]
   enableDebugVis: false
 
+#  clipObservations: 5.0
   clipActions: 1.0
 
   urdfAsset:
@@ -21,7 +22,7 @@ env:
     thighName: thigh
     calfName: calf
     footName: foot # SHANK if collapsing fixed joint, FOOT otherwise
-    collapseFixedJoints: False
+    collapseFixedJoints: True
     fixBaseLink: False
     defaultDofDriveMode: 4 # see GymDofDriveModeFlags (0 is none, 1 is pos tgt, 2 is vel tgt, 4 effort)
     useForceSensor: False # wsh_annotation: use force sensors to acquire feet forces or not
@@ -32,17 +33,17 @@ env:
   xywVelocityCommandThreshold: [ 0.1, 0.05, 0.1 ] # [ 0.1, 0.05, 0.1 ]
 
   baseInitState:
-    pos: [ 0.0, 0.0, 0.30001 ] # x,y,z [m] 0.28
+    pos: [ 0.0, 0.0, 0.33 ] # x,y,z [m] 0.28
     #    rot: [ 0.0, 0.0, 0.0, 1.0 ] # x,y,z,w [quat]
     rpy: [ 0.0, 0.0, 0.0 ] # roll, pitch, yaw [rad]
     vLinear: [ 0.0, 0.0, 0.0 ]  # x,y,z [m/s]
     vAngular: [ 0.0, 0.0, 0.0 ]  # x,y,z [rad/s]
 
   defaultJointAngles:
-    FR_hip_joint: 0.0    # [rad]
-    FL_hip_joint: 0.0    # [rad]
-    RR_hip_joint: 0.0   # [rad]
-    RL_hip_joint: 0.0   # [rad]
+    FR_hip_joint: -0.01    # [rad]
+    FL_hip_joint: 0.01    # [rad]
+    RR_hip_joint: -0.01   # [rad]
+    RL_hip_joint: 0.01   # [rad]
 
     FR_thigh_joint: 0.7954 # 0.8632     # [rad]
     FL_thigh_joint: 0.7954 # 0.8632     # [rad]
@@ -56,16 +57,16 @@ env:
 
   terrain:
     terrainType: plane # none, plane, or trimesh
-    staticFriction: 0.5  # [-]
-    dynamicFriction: 0.46  # [-]
+    staticFriction: 0.2  # [-]
+    dynamicFriction: 0.2  # [-]
     restitution: 0.1        # [-]
     # rough terrain only:
     curriculum: false
     maxInitMapLevel: 0
-    mapLength: 8. # 40.
-    mapWidth: 8. # 40.
-    numLevels: 5 # 10
-    numTerrains: 5 # 20
+    mapLength: 20. # 40.
+    mapWidth: 20. # 40.
+    numLevels: 4 # 10
+    numTerrains: 4 # 20
     # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
     terrainProportions: [ 0.1, 0.1, 0.35, 0.25, 0.2 ]
     # tri mesh only:
@@ -78,36 +79,37 @@ env:
   randomCommandVelocityRanges:
     # train
     linear_x: [ -2., 2. ] # min max [m/s]
-    linear_y: [ -0.5, 0.5 ]   # min max [m/s]
-    yaw: [ -2, 2 ]    # min max [rad/s]
+    linear_y: [ -1., 1. ]   # min max [m/s]
+    yaw: [ -1., 1. ]    # min max [rad/s]
 
   control:
     # PD Drive parameters:
-    stiffness: 80.0  # [N*m/rad]
-    damping: 2.0     # [N*m*s/rad]
+    stiffness: 55 # 48.0  # [N*m/rad]
+    damping: 0.8 # 1.2     # [N*m*s/rad]
     # action scale: target angle = actionScale * action + defaultAngle
-    actionScale: 1.0
+    actionScale: 0.8
+    controlFrequencyInv: 1 # 60 Hz
     # decimation: Number of control action updates @ sim DT per policy DT
-    decimation: 10 # 4
+    decimation: 4 # 4
 
   learn:
     allowKneeContacts: false
     # rewards
     terminalReward: 0
-    linearVelocityXYRewardScale: 5.0 # 5.0
+    linearVelocityXYRewardScale: 1.0 # 5.0
     linearVelocityZRewardScale: -0.0 # -1.0
     angularVelocityXYRewardScale: -0.00
-    angularVelocityZRewardScale: 3.0 # 5.0 # 0.5
+    angularVelocityZRewardScale: 0.5 # 5.0 # 0.5
     orientationRewardScale: -0. #-1.
-    torqueRewardScale: -0.000 # -0.000025
+    torqueRewardScale: -0.0000 # -0.000025
     jointAccRewardScale: -0.000 # -0.0005 -0.0025
-    baseHeightRewardScale: -100 # -0.2, 5
-    feetAirTimeRewardScale: 30.0 # 1.0
+    baseHeightRewardScale: -0 # -0.2, 5
+    feetAirTimeRewardScale: -0.0 # 1.0
     kneeCollisionRewardScale: -0.0 # -0.05 # -0.25
     feetStumbleRewardScale: -0. #-2.0
-    actionRateRewardScale: -0.01 #-0.01
+    actionRateRewardScale: -0.0 #-0.01
     energyRewardScale: -0.0 # -0.02
-    powerRewardScale: -0.00025 # -0.0025
+    powerRewardScale: -0.00 # -0.0025
     power_max_mean_each: -0 # -0.001
     power_max_mean_std: -0 # -0.001
     feet_max_force_total: -0 # -0.001
@@ -120,44 +122,53 @@ env:
     observationConfig:
       addNoise: false
       combination:
-        linearVelocity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
-        angularVelocity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
-        projectedGravity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
+#        linearVelocity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
+#        angularVelocity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
+#        projectedGravity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
+#        commands: 0 # size -> 3
         dofPosition: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
+#        dofPositionRelInit: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
         dofVelocity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
+        rollAngle: 0
+        pitchAngle: 0
         feetContactState: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 4
         lastAction: 0 # size -> 8
-        commands: 0 # size -> 3
+
       components:
         linearVelocity:
           size: 3
-          bufferLength: 151
-          scale: 0.3
+          bufferLength: 11
+          scale: 2.0
           noise: 0.02
         angularVelocity:
           size: 3
-          bufferLength: 151
-          scale: 0.3
+          bufferLength: 11
+          scale: 0.25
           noise: 0.002
         projectedGravity:
           size: 3
-          bufferLength: 151
+          bufferLength: 11
           scale: 1.0
           noise: 0.05
         dofPosition:
           size: 12
-          bufferLength: 151
+          bufferLength: 11
+          scale: 1.0
+          noise: 0.002
+        dofPositionRelInit:
+          size: 12
+          bufferLength: 11
           scale: 1.0
           noise: 0.002
         dofVelocity:
           size: 12
-          bufferLength: 151
-          scale: 0.05
+          bufferLength: 11
+          scale: 1.0  # 0.05
           noise: 0.2
         commands:
           size: 3
           bufferLength: 1
-          scale: [ 0.3, 0.3, 0.3 ]
+          scale: [ 2.0, 2.0, 0.25 ]
           noise: 0
         lastAction:
           size: 12
@@ -166,7 +177,7 @@ env:
           noise: 0
         feetContactState:
           size: 4
-          bufferLength: 151
+          bufferLength: 11
           scale: 1.0
           noise: 0
 #        heightMeasurement:
@@ -177,22 +188,32 @@ env:
 
         bodyPos:
           size: 3
-          bufferLength: 151
+          bufferLength: 11
           scale: 1.0
           noise: 0
 #        bodyOri:
 #          size: 3
-#          bufferLength: 150
+#          bufferLength: 11
 #          scale: 1.0
 #          noise: 0
         motorTorque:
           size: 12
-          bufferLength: 151
+          bufferLength: 11
           scale: 1.0
           noise: 0
         feetForce:
           size: 12
-          bufferLength: 151
+          bufferLength: 11
+          scale: 1.0
+          noise: 0
+        rollAngle:
+          size: 1
+          bufferLength: 11
+          scale: 1.0
+          noise: 0
+        pitchAngle:
+          size: 1
+          bufferLength: 11
           scale: 1.0
           noise: 0
 
@@ -204,7 +225,7 @@ env:
     heightMeasurementScale: 5.0
 
     # noise
-    addNoise: true
+    addNoise: false
     noiseLevel: 1.0 # scales other values
     dofPositionNoise: 0.01
     dofVelocityNoise: 1.5
@@ -217,11 +238,11 @@ env:
     randomizeContactParams: true
     frictionRange: [ 0.5, 1.25 ]
     restitutionRange: [ 0.0, 0.5 ]
-    pushRobots: false
+    pushRobots: true
     pushInterval_s: 3
 
     # episode length in seconds
-    episodeLength_s: 30
+    episodeLength_s: 100
 
   # viewer cam:
   viewer:
@@ -233,7 +254,7 @@ env:
   enableCameraSensors: False
 
 sim:
-  dt: 0.002 # 0.005
+  dt: 0.0025 # 0.005
   substeps: 2
   up_axis: "z"
   use_gpu_pipeline: ${eq:${...pipeline},"gpu"}
@@ -244,12 +265,14 @@ sim:
     use_gpu: ${contains:"cuda",${....sim_device}} # set to False to run on CPU
     num_position_iterations: 4
     num_velocity_iterations: 1
-    contact_offset: 0.02
+    contact_offset: 0.0
     rest_offset: 0.0
+    friction_correlation_distance: 0.0025
+    friction_offset_threshold: 0.004
     bounce_threshold_velocity: 0.2
     max_depenetration_velocity: 100.0
     default_buffer_size_multiplier: 5.0
-    max_gpu_contact_pairs: 30000000 # 8388608 # 8*1024*1024
+    max_gpu_contact_pairs: 8388608  # 30000000 # 8388608 # 8*1024*1024
     num_subscenes: ${....num_subscenes}
     contact_collection: 1 # 0: CC_NEVER (don't collect contact info), 1: CC_LAST_SUBSTEP (collect only contacts on last substep), 2: CC_ALL_SUBSTEPS (default - all contacts)
 
@@ -258,12 +281,12 @@ task:
   randomization_params:
     frequency: 600   # Define how many environment steps between generating new randomizations
     actions:
-      range: [ 0., .02 ]
+      range: [ 0., .002 ]
       operation: "additive"
       distribution: "gaussian"
     sim_params:
       gravity:
-        range: [ 0, 0.4 ]
+        range: [ 0, 0.0 ]
         operation: "additive"
         distribution: "gaussian"
         schedule: "linear"  # "linear" will linearly interpolate between no rand and max rand
@@ -282,14 +305,14 @@ task:
         rigid_shape_properties:
           friction: ### wsh_annotation: default -> 1.0
             num_buckets: 500
-            range: [ 0.1, 2.1 ]
+            range: [ 0.7, 1.3 ]
             operation: "scaling"
             distribution: "uniform"
             schedule: "linear"  # "linear" will scale the current random sample by `min(current num steps, schedule_steps) / schedule_steps`
             schedule_steps: 3000
           restitution: ### wsh_annotation: default -> 0.0
-            range: [ -0.1, 1.3 ]
-            operation: "additive"
+            range: [ 0., 0.7 ]
+            operation: "scaling"
             distribution: "uniform"
             schedule: "linear"  # "linear" will scale the current random sample by `min(current num steps, schedule_steps) / schedule_steps`
             schedule_steps: 3000

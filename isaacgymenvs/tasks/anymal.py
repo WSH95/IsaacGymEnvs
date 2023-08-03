@@ -1,4 +1,4 @@
-# Copyright (c) 2018-2022, NVIDIA Corporation
+# Copyright (c) 2018-2023, NVIDIA Corporation
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -32,8 +32,8 @@ import torch
 
 from isaacgym import gymtorch
 from isaacgym import gymapi
-from isaacgym.torch_utils import *
 
+from isaacgymenvs.utils.torch_jit_utils import to_torch, get_axis_params, torch_rand_float, quat_rotate, quat_apply, quat_rotate_inverse
 from isaacgymenvs.tasks.base.vec_task import VecTask
 
 from typing import Tuple, Dict
@@ -163,14 +163,12 @@ class Anymal(VecTask):
         plane_params.normal = gymapi.Vec3(0.0, 0.0, 1.0)
         plane_params.static_friction = self.plane_static_friction
         plane_params.dynamic_friction = self.plane_dynamic_friction
+        plane_params.restitution = self.plane_restitution
         self.gym.add_ground(self.sim, plane_params)
 
     def _create_envs(self, num_envs, spacing, num_per_row):
         asset_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../assets')
         asset_file = "urdf/anymal_c/urdf/anymal.urdf"
-        #asset_path = os.path.join(asset_root, asset_file)
-        #asset_root = os.path.dirname(asset_path)
-        #asset_file = os.path.basename(asset_path)
 
         asset_options = gymapi.AssetOptions()
         asset_options.default_dof_drive_mode = gymapi.DOF_MODE_NONE
@@ -204,8 +202,13 @@ class Anymal(VecTask):
         dof_props = self.gym.get_asset_dof_properties(anymal_asset)
         for i in range(self.num_dof):
             dof_props['driveMode'][i] = gymapi.DOF_MODE_EFFORT  # gymapi.DOF_MODE_POS
-            dof_props['stiffness'][i] = self.cfg["env"]["control"]["stiffness"] #self.Kp
-            dof_props['damping'][i] = self.cfg["env"]["control"]["damping"] #self.Kd
+            # dof_props['stiffness'][i] = self.cfg["env"]["control"]["stiffness"] #self.Kp
+            # dof_props['damping'][i] = self.cfg["env"]["control"]["damping"] #self.Kd
+
+        rigid_shape_prop = self.gym.get_asset_rigid_shape_properties(anymal_asset)
+        for i in range(len(rigid_shape_prop)):
+            rigid_shape_prop[i].friction = 4.6  # self.plane_static_friction
+            rigid_shape_prop[i].restitution = self.plane_restitution
 
         env_lower = gymapi.Vec3(-spacing, -spacing, 0.0)
         env_upper = gymapi.Vec3(spacing, spacing, spacing)
@@ -217,6 +220,7 @@ class Anymal(VecTask):
             env_ptr = self.gym.create_env(self.sim, env_lower, env_upper, num_per_row)
             anymal_handle = self.gym.create_actor(env_ptr, anymal_asset, start_pose, "anymal", i, 1, 0)
             self.gym.set_actor_dof_properties(env_ptr, anymal_handle, dof_props)
+            self.gym.set_actor_rigid_shape_properties(env_ptr, anymal_handle, rigid_shape_prop)
             self.gym.enable_actor_dof_force_sensors(env_ptr, anymal_handle)
             self.envs.append(env_ptr)
             self.anymal_handles.append(anymal_handle)
@@ -230,15 +234,11 @@ class Anymal(VecTask):
 
     def pre_physics_step(self, actions):
         self.actions = actions.clone().to(self.device)
-        # targets = self.action_scale * self.actions + self.default_dof_pos
+        targets = self.action_scale * self.actions + self.default_dof_pos
         # self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(targets))
 
-        targets = self.actions.clone()
-        targets[:, [0, 3, 6, 9]] *= 0.8
-        targets[:, [1, 4, 7, 10]] = 1.325 * targets[:, [1, 4, 7, 10]] - 0.525
-        targets[:, [2, 5, 8, 11]] = 0.887 * targets[:, [2, 5, 8, 11]] - 0.213
-        # dof_pos_desired = self.actions * 2.0
-        targets += self.default_dof_pos
+        # targets = self.action_scale * self.actions
+        # targets += self.default_dof_pos
 
         for i in range(self.decimation):
             torques = torch.clip(self.Kp*(targets - self.dof_pos) - self.Kd*self.dof_vel,
@@ -256,9 +256,9 @@ class Anymal(VecTask):
         ### wsh_annotation: incease self.randomize_buf
         self.randomize_buf += 1
 
-        env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1) ### wsh_annotation: Don't need to refresh the self.reset_buf first??
-        if len(env_ids) > 0:
-            self.reset_idx(env_ids)
+        # env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1) ### wsh_annotation: Don't need to refresh the self.reset_buf first??
+        # if len(env_ids) > 0:
+        #     self.reset_idx(env_ids)
 
         self.compute_observations()
         self.compute_reward(self.actions)
@@ -308,6 +308,9 @@ class Anymal(VecTask):
         positions_offset = torch_rand_float(0.5, 1.5, (len(env_ids), self.num_dof), device=self.device)
         velocities = torch_rand_float(-0.1, 0.1, (len(env_ids), self.num_dof), device=self.device)
 
+        positions_offset = 1.0
+        velocities = 0.0
+
         self.dof_pos[env_ids] = self.default_dof_pos[env_ids] * positions_offset
         self.dof_vel[env_ids] = velocities
 
@@ -325,9 +328,9 @@ class Anymal(VecTask):
         self.commands_y[env_ids] = torch_rand_float(self.command_y_range[0], self.command_y_range[1], (len(env_ids), 1), device=self.device).squeeze()
         self.commands_yaw[env_ids] = torch_rand_float(self.command_yaw_range[0], self.command_yaw_range[1], (len(env_ids), 1), device=self.device).squeeze()
 
-        # self.commands_x[env_ids] = 0.5
-        # self.commands_y[env_ids] = 0.0
-        # self.commands_yaw[env_ids] = 0.0
+        self.commands_x[env_ids] = 2
+        self.commands_y[env_ids] = 0.0
+        self.commands_yaw[env_ids] = 0
 
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 1
@@ -399,6 +402,8 @@ def compute_anymal_observations(root_states,
     base_lin_vel = quat_rotate_inverse(base_quat, root_states[:, 7:10]) * lin_vel_scale
     base_ang_vel = quat_rotate_inverse(base_quat, root_states[:, 10:13]) * ang_vel_scale
     projected_gravity = quat_rotate(base_quat, gravity_vec)
+    # print(f"projected_gravity1: {projected_gravity}")
+    # print(f"projected_gravity2: {quat_rotate_inverse(base_quat, gravity_vec)}")
     dof_pos_scaled = (dof_pos - default_dof_pos) * dof_pos_scale
 
     commands_scaled = commands*torch.tensor([lin_vel_scale, lin_vel_scale, ang_vel_scale], requires_grad=False, device=commands.device)

@@ -1,4 +1,4 @@
-# Copyright (c) 2018-2022, NVIDIA Corporation
+# Copyright (c) 2018-2023, NVIDIA Corporation
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -26,7 +26,6 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-
 from .ant import Ant
 from .anymal import Anymal
 from .anymal_terrain import AnymalTerrain
@@ -45,12 +44,52 @@ from .ingenuity import Ingenuity
 from .quadcopter import Quadcopter
 from .shadow_hand import ShadowHand
 from .allegro_hand import AllegroHand
+from .dextreme.allegro_hand_dextreme import AllegroHandDextremeManualDR, AllegroHandDextremeADR
 from .trifinger import Trifinger
-from .a1 import A1 ### wsh_annotation: add a1 task
+from .a1 import A1  ### wsh_annotation: add a1 task
+from .a1_test import A1Test
+
+from .allegro_kuka.allegro_kuka_reorientation import AllegroKukaReorientation
+from .allegro_kuka.allegro_kuka_regrasping import AllegroKukaRegrasping
+from .allegro_kuka.allegro_kuka_throw import AllegroKukaThrow
+from .allegro_kuka.allegro_kuka_two_arms_regrasping import AllegroKukaTwoArmsRegrasping
+from .allegro_kuka.allegro_kuka_two_arms_reorientation import AllegroKukaTwoArmsReorientation
+
+
+def resolve_allegro_kuka(cfg, *args, **kwargs):
+    subtask_name: str = cfg["env"]["subtask"]
+    subtask_map = dict(
+        reorientation=AllegroKukaReorientation,
+        throw=AllegroKukaThrow,
+        regrasping=AllegroKukaRegrasping,
+    )
+
+    if subtask_name not in subtask_map:
+        print("!!!!!")
+        raise ValueError(f"Unknown subtask={subtask_name} in {subtask_map}")
+
+    return subtask_map[subtask_name](cfg, *args, **kwargs)
+
+def resolve_allegro_kuka_two_arms(cfg, *args, **kwargs):
+    subtask_name: str = cfg["env"]["subtask"]
+    subtask_map = dict(
+        reorientation=AllegroKukaTwoArmsReorientation,
+        regrasping=AllegroKukaTwoArmsRegrasping,
+    )
+
+    if subtask_name not in subtask_map:
+        raise ValueError(f"Unknown subtask={subtask_name} in {subtask_map}")
+
+    return subtask_map[subtask_name](cfg, *args, **kwargs)
+
 
 # Mappings from strings to environments
 isaacgym_task_map = {
     "AllegroHand": AllegroHand,
+    "AllegroKuka": resolve_allegro_kuka,
+    "AllegroKukaTwoArms": resolve_allegro_kuka_two_arms,
+    "AllegroHandManualDR": AllegroHandDextremeManualDR,
+    "AllegroHandADR": AllegroHandDextremeADR,
     "Ant": Ant,
     "Anymal": Anymal,
     "AnymalTerrain": AnymalTerrain,
@@ -69,5 +108,6 @@ isaacgym_task_map = {
     "Quadcopter": Quadcopter,
     "ShadowHand": ShadowHand,
     "Trifinger": Trifinger,
-    "A1": A1, ### wsh_annotation: add a1 task
+    "A1": A1,  ### wsh_annotation: add a1 task
+    "A1Test": A1Test
 }
