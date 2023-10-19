@@ -223,6 +223,11 @@ def launch_rlg_hydra(cfg: DictConfig):
         task_file_name = convert_name(cfg.task.name)
         task_file_path = os.path.join('tasks', task_file_name + '.py')
         shutil.copy(task_file_path, experiment_dir)
+        # copy config files
+        cfg_task_file_path = os.path.join('cfg/task', cfg.task.name + '.yaml')
+        cfg_train_file_path = os.path.join('cfg/train', cfg.task.name + 'PPO.yaml')
+        shutil.copy(cfg_task_file_path, experiment_dir)
+        shutil.copy(cfg_train_file_path, experiment_dir)
 
     runner.run({
         'train': not cfg.test,
@@ -235,13 +240,13 @@ def launch_rlg_hydra(cfg: DictConfig):
 import re
 def convert_name(name):
     # Replace all uppercase letters followed by a digit with the lowercase letter and an underscore
-    name = re.sub(r'([A-Z])(\d+)([A-Za-z]*)', r'\1\2_\3', name)
+    name = re.sub(r'([A-Z])(\d)([A-Za-z]*)', r'\1\2\3', name)
+
+    # Replace all uppercase letters not at the beginning of the string with an underscore followed by the lowercase letter
+    name = re.sub(r'(?<!^)([A-Z])', r'_\1', name)
 
     # Convert the string to lowercase
     name = name.lower()
-
-    # Remove any trailing underscores
-    name = name.rstrip('_')
 
     return name
 

@@ -13,7 +13,7 @@ seed: 42
 torch_deterministic: False
 
 # set the maximum number of learning iterations to train for. overrides default per-environment setting
-max_iterations: 5000
+max_iterations: ''
 
 ## Device config
 #  'physx' or 'flex'
@@ -35,9 +35,9 @@ num_subscenes: 16 # Splits the simulation into N physics scenes and runs each on
 # test - if set, run policy in inference mode (requires setting checkpoint to load)
 test: False
 # used to set checkpoint path
-checkpoint: ''
+checkpoint: 'runs/A1_2023-10-18_17-50-01/nn/A1.pth'
 # used to initialize the actor net
-actor_init: ''
+actor_init: ''#'runs/A1_2023-10-09_17-39-45/nn/A1.pth'
 # set sigma when restoring network
 sigma: ''
 # set to True to use multi-gpu training

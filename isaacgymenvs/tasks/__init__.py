@@ -48,6 +48,7 @@ from .dextreme.allegro_hand_dextreme import AllegroHandDextremeManualDR, Allegro
 from .trifinger import Trifinger
 from .a1 import A1  ### wsh_annotation: add a1 task
 from .a1_test import A1Test
+from .a1_test2 import A1Test2
 
 from .allegro_kuka.allegro_kuka_reorientation import AllegroKukaReorientation
 from .allegro_kuka.allegro_kuka_regrasping import AllegroKukaRegrasping
@@ -109,5 +110,6 @@ isaacgym_task_map = {
     "ShadowHand": ShadowHand,
     "Trifinger": Trifinger,
     "A1": A1,  ### wsh_annotation: add a1 task
-    "A1Test": A1Test
+    "A1Test": A1Test,
+    "A1Test2": A1Test2
 }

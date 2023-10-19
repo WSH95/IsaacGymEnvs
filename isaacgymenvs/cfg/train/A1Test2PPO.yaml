@@ -2,10 +2,10 @@ params:
   seed: ${...seed}
 
   algo:
-    name: a2c_continuous
+    name: a2c_continuous  # custom_agent_player  # a2c_continuous
 
   model:
-    name: continuous_a2c_logstd
+    name: continuous_a2c_logstd  # custom_model_continuous  # continuous_a2c_logstd
 
   network:
     name: actor_critic
@@ -19,7 +19,7 @@ params:
           name: default
         sigma_init:
           name: const_initializer
-          val: 0. # std = 1.
+          val: -1. # std = 1.
         fixed_sigma: True
 
     mlp:
@@ -44,7 +44,7 @@ params:
   load_path: ${...checkpoint} # path to the checkpoint to load
 
   config:
-    name: ${resolve_default:AnymalTerrain,${....experiment}}
+    name: ${resolve_default:A1Test2,${....experiment}}
     full_experiment_name: ${.name}
     env_name: rlgpu
     ppo: True
@@ -75,7 +75,7 @@ params:
     seq_len: 4 # only for rnn
     bounds_loss_coef: 0.
 
-    max_epochs: ${resolve_default:2000,${....max_iterations}}
+    max_epochs: ${resolve_default:6000,${....max_iterations}}
     save_best_after: 100
     score_to_win: 20000
     save_frequency: 50

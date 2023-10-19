@@ -11,8 +11,8 @@ env:
   clipActions: 1.0
 
   plane:
-    staticFriction: -1.  # [-]
-    dynamicFriction: -1.  # [-]
+    staticFriction: 0.  # [-]
+    dynamicFriction: 0.  # [-]
     restitution: 0.1        # [-]
 
   baseInitState:
@@ -32,7 +32,7 @@ env:
     damping: 2.0     # [N*m*s/rad]
     actionScale: 3  # 0.5
     controlFrequencyInv: 1 # 60 Hz
-    decimation: 10
+    decimation: 1
 
   defaultJointAngles:  # = target angles when action = 0.0
     LF_HAA: 0.03    # [rad]
@@ -80,7 +80,7 @@ env:
   enableCameraSensors: False
 
 sim:
-  dt: 0.002 # 0.02
+  dt: 0.01 # 0.02
   substeps: 2
   up_axis: "z"
   use_gpu_pipeline: ${eq:${...pipeline},"gpu"}
