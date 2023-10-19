@@ -31,6 +31,8 @@ class MotionPlanningInterface:
                                                 requires_grad=False)
         self.body_angular_velocity = torch.zeros(self.num_robots, 3, dtype=torch.float, device=self.device,
                                                  requires_grad=False)
+        self.des_feet_pos_rel_hip = torch.zeros(self.num_robots, 12, dtype=torch.float, device=self.device,
+                                                 requires_grad=False)
 
     def get_motion_command(self):
         return self.motion_planning_cmd.clone()
@@ -45,14 +47,15 @@ class MotionPlanningInterface:
                                                  self.swing_clearance_offset,
                                                  self.body_orientation,
                                                  self.body_linear_velocity,
-                                                 self.body_angular_velocity],
+                                                 self.body_angular_velocity,
+                                                 self.des_feet_pos_rel_hip],
                                                 dim=-1)
 
     def update_gait_planning(self,
                              gait_to_change: Union[torch.Tensor, bool] = False,
                              gait_period_offset: Union[torch.Tensor, None] = None,
                              gait_duty_cycle_offset: Union[torch.Tensor, None] = None,
-                             gait_phase_offset: Union[torch.Tensor, None] = None,
+                             gait_phase_offset: Union[torch.Tensor, None] = None,  # [FL RR RL FR]
                              swing_clearance_offset: Union[torch.Tensor, None] = None):
         if isinstance(gait_to_change, bool):
             if gait_to_change:
@@ -99,6 +102,9 @@ class MotionPlanningInterface:
             self.body_linear_velocity[:, 2] = 0
             self.body_angular_velocity[:, :2] = 0
             self.body_angular_velocity[:, 2] = body_vel_x_y_wz[:, 2].clone()
+
+    def update_des_feet_pos_rel_hip(self, des_feet_pos_rel_hip: torch.Tensor):
+        self.des_feet_pos_rel_hip = des_feet_pos_rel_hip.clone()
 
     def change_gait_planning(self, flag: bool):
         if flag:
