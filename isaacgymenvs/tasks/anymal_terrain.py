@@ -157,6 +157,13 @@ class AnymalTerrain(VecTask):
                              "orient": torch_zeros(), "torques": torch_zeros(), "joint_acc": torch_zeros(), "base_height": torch_zeros(),
                              "air_time": torch_zeros(), "collision": torch_zeros(), "stumble": torch_zeros(), "action_rate": torch_zeros(), "hip": torch_zeros()}
 
+        self.dof_order_act = torch.tensor([0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11], dtype=torch.int64, device=self.device,
+                                          requires_grad=False)
+        self.dof_order_obs = torch.tensor([0, 3, 6, 9, 1, 4, 7, 10, 2, 5, 8, 11], dtype=torch.int64, device=self.device,
+                                          requires_grad=False)
+        self.dof_order_obs = torch.arange(12, dtype=torch.int64, device=self.device, requires_grad=False)
+        self.dof_order_act = torch.arange(12, dtype=torch.int64, device=self.device, requires_grad=False)
+
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
         self.init_done = True
 
@@ -227,6 +234,7 @@ class AnymalTerrain(VecTask):
         asset_options.armature = 0.0
         asset_options.thickness = 0.01
         asset_options.disable_gravity = False
+        # asset_options.enable_gyroscopic_forces = False
 
         anymal_asset = self.gym.load_asset(self.sim, asset_root, asset_file, asset_options)
         self.num_dof = self.gym.get_asset_dof_count(anymal_asset)
@@ -306,10 +314,10 @@ class AnymalTerrain(VecTask):
                                     self.base_ang_vel  * self.ang_vel_scale,
                                     self.projected_gravity,
                                     self.commands[:, :3] * self.commands_scale,
-                                    self.dof_pos * self.dof_pos_scale,
-                                    self.dof_vel * self.dof_vel_scale,
+                                    self.dof_pos[:, self.dof_order_obs] * self.dof_pos_scale,
+                                    self.dof_vel[:, self.dof_order_obs] * self.dof_vel_scale,
                                     heights,
-                                    self.actions
+                                    self.actions[:, self.dof_order_obs]
                                     ), dim=-1)
 
     def compute_reward(self):
@@ -411,6 +419,11 @@ class AnymalTerrain(VecTask):
         self.commands[env_ids, 3] = torch_rand_float(self.command_yaw_range[0], self.command_yaw_range[1], (len(env_ids), 1), device=self.device).squeeze()
         self.commands[env_ids] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.25).unsqueeze(1) # set small commands to zero. wsh_annotation: TODO 0.25 ?
 
+        # self.commands[:, 0] = 0.6
+        # self.commands[:, 1] = 0.0
+        # self.commands[:, 2] = 0.0
+        # self.commands[:, 3] = 0.0
+
         self.last_actions[env_ids] = 0.
         self.last_dof_vel[env_ids] = 0.
         self.feet_air_time[env_ids] = 0.
@@ -439,10 +452,13 @@ class AnymalTerrain(VecTask):
         self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.root_states))
 
     def pre_physics_step(self, actions):
-        self.actions = actions.clone().to(self.device)
+        self.actions = actions[:, self.dof_order_act].clone().to(self.device)
         for i in range(self.decimation):
             torques = torch.clip(self.Kp*(self.action_scale*self.actions + self.default_dof_pos - self.dof_pos) - self.Kd*self.dof_vel,
                                  -80., 80.)
+            # torques = torch.clip(self.Kp * (
+            #             self.action_scale * self.actions + self.default_dof_pos - self.dof_pos) - self.Kd * self.dof_vel,
+            #                      -33.5, 33.5)
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
             self.torques = torques.view(self.torques.shape)
             self.gym.simulate(self.sim)
@@ -642,7 +658,7 @@ class Terrain:
                     if choice < 0.15:
                         slope *= -1
                     pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
-                    random_uniform_terrain(terrain, min_height=-0.1, max_height=0.1, step=0.025, downsampled_scale=0.2)
+                    random_uniform_terrain(terrain, min_height=-0.02*difficulty, max_height=0.02*difficulty, step=0.02, downsampled_scale=0.2)
                 elif choice < self.proportions[3]:
                     if choice<self.proportions[2]:
                         step_height *= -1

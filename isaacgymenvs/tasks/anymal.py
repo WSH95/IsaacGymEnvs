@@ -235,20 +235,20 @@ class Anymal(VecTask):
     def pre_physics_step(self, actions):
         self.actions = actions.clone().to(self.device)
         targets = self.action_scale * self.actions + self.default_dof_pos
-        # self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(targets))
+        self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(targets))
 
         # targets = self.action_scale * self.actions
         # targets += self.default_dof_pos
 
-        for i in range(self.decimation):
-            torques = torch.clip(self.Kp*(targets - self.dof_pos) - self.Kd*self.dof_vel,
-                                 -80., 80.)
-            self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
-            self.torques = torques.view(self.torques.shape)
-            self.gym.simulate(self.sim)
-            if self.device == 'cpu':
-                self.gym.fetch_results(self.sim, True)
-            self.gym.refresh_dof_state_tensor(self.sim)
+        # for i in range(self.decimation):
+        #     torques = torch.clip(self.Kp*(targets - self.dof_pos) - self.Kd*self.dof_vel,
+        #                          -80., 80.)
+        #     self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
+        #     self.torques = torques.view(self.torques.shape)
+        #     self.gym.simulate(self.sim)
+        #     if self.device == 'cpu':
+        #         self.gym.fetch_results(self.sim, True)
+        #     self.gym.refresh_dof_state_tensor(self.sim)
 
     def post_physics_step(self):
         self.progress_buf += 1
@@ -328,9 +328,9 @@ class Anymal(VecTask):
         self.commands_y[env_ids] = torch_rand_float(self.command_y_range[0], self.command_y_range[1], (len(env_ids), 1), device=self.device).squeeze()
         self.commands_yaw[env_ids] = torch_rand_float(self.command_yaw_range[0], self.command_yaw_range[1], (len(env_ids), 1), device=self.device).squeeze()
 
-        self.commands_x[env_ids] = 2
-        self.commands_y[env_ids] = 0.0
-        self.commands_yaw[env_ids] = 0
+        # self.commands_x[env_ids] = 2
+        # self.commands_y[env_ids] = 0.0
+        # self.commands_yaw[env_ids] = 0
 
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 1
