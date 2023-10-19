@@ -68,7 +68,7 @@ class CustomAgent(a2c_continuous.A2CAgent):
             self.experience_buffer.update_data('next_obses', n, self.obs['obs'])
             self.experience_buffer.update_data('dones', n, self.dones)
 
-            terminated = infos['terminate'].float()
+            terminated = infos['terminate'].float().to(self.device)
             terminated = terminated.unsqueeze(-1)
             next_vals = self.get_values(self.obs)
             next_vals *= (1.0 - terminated)

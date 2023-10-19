@@ -80,13 +80,14 @@ class CustomPlayer(players.PpoPlayerContinuous):
 
             for n in range(self.max_steps):
                 obses, done_env_ids = self._env_reset_done()
+                # time_forward = time.time()
                 if has_masks:
                     masks = self.env.get_action_mask()
                     action = self.get_masked_action(
                         obses, masks, is_deterministic)
                 else:
                     action = self.get_action(obses, is_deterministic)
-
+                # print(f"time_forward: {(time.time() - time_forward)*1000} ms")
                 obses, r, done, info = self.env_step(self.env, action)
                 cr += r
                 steps += 1
