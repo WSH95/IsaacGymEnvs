@@ -8,6 +8,7 @@ class CustomModelContinuous(ModelA2CContinuousLogStd):
         return
 
     class Network(ModelA2CContinuousLogStd.Network):
+        # self.a2c_network -> A2CBuilder.Network(cfg.train.params['network'], PpoPlayerContinuous.config)
         def __init__(self, a2c_network, **kwargs):
             super().__init__(a2c_network, **kwargs)
             return

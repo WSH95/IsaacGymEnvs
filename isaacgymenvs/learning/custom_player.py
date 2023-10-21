@@ -5,6 +5,10 @@ from collections import OrderedDict
 
 
 class CustomPlayer(players.PpoPlayerContinuous):
+    # self.network -> self.config['network'] -> 'custom_model_continuous.CustomModelContinuous(self.network_builder)';
+    # self.network_builder -> network_builder.A2CBuilder();
+    # self.model -> CustomModelContinuous.Network(A2CBuilder.Network(cfg.train.params['network'], PpoPlayerContinuous.config),
+    #                                             obs_shape, normalize_value, normalize_input, value_size);
     def __init__(self, params):
         super().__init__(params)
 
