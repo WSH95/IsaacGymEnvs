@@ -48,6 +48,8 @@ from isaacgymenvs.utils.controller_bridge import SingleControllerBridge, VecCont
 
 from isaacgymenvs.utils.motion_planning_interface import MotionPlanningInterface
 
+from isaacgymenvs.utils.gait_tracking_policy import GaitTrackingPolicy
+
 import random
 
 class A1(VecTask):
@@ -70,7 +72,7 @@ class A1(VecTask):
         v_lin = self.cfg["env"]["baseInitState"]["vLinear"]
         v_ang = self.cfg["env"]["baseInitState"]["vAngular"]
         self.base_init_state = pos + rot + v_lin + v_ang
-        self.desired_base_height = pos[2]
+        self.desired_base_height = 0.3
 
         # threshold
         self.contact_force_threshold = self.cfg["env"]["contactForceThreshold"]
@@ -132,6 +134,15 @@ class A1(VecTask):
         self.command_gait_duty_range = self.cfg["env"]["learn"]["randomCommandGaitRanges"]["duty"]
         self.command_gait_offset_range = self.cfg["env"]["learn"]["randomCommandGaitRanges"]["offset"]
         self.command_height_range = self.cfg["env"]["learn"]["randomCommandHeightRanges"]
+        self.if_schedule_command = self.cfg["env"]["learn"]["ifScheduleCommand"]
+
+        # push ranges
+        self.push_velocity_range = self.cfg["env"]["learn"]["randomPushRanges"]["velocity"]
+
+        self.scheduled_command_x_range = self.command_x_range
+        self.scheduled_command_y_range = self.command_y_range
+        self.scheduled_command_yaw_range = self.command_yaw_range
+        self.scheduled_push_velocity_range = self.push_velocity_range
 
         # other
         # self.decimation = self.cfg["env"]["control"]["decimation"]
@@ -242,10 +253,13 @@ class A1(VecTask):
         self.commands = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device,
                                     requires_grad=False)  # x vel, y vel, yaw vel, heading
         self.gait_commands = torch.zeros(self.num_envs, 6, dtype=torch.float, device=self.device,
-                                    requires_grad=False)  # stance_time, duty, offset2, offset3, offset4, phase
+                                    requires_grad=False)  # period, duty, offset2, offset3, offset4, phase
         self.gait_params_act = torch.zeros_like(self.gait_commands)
         self.gait_params_act_last = torch.zeros_like(self.gait_commands)
+        self.gait_params_act_raw_last = torch.zeros(self.num_envs, 7, dtype=torch.float, device=self.device,
+                                                    requires_grad=False)
         self.gait_periods = torch.zeros_like(self.gait_commands[:, 0])
+        self.gait_period_act = torch.zeros_like(self.gait_commands[:, 0])
         self.gait_period_tracking_error_last = torch.zeros_like(self.gait_commands[:, 0])
         self.phase_overwrite = torch.zeros_like(self.gait_commands[:, 3])
         self.phase_overwrite_last = torch.zeros_like(self.phase_overwrite)
@@ -342,7 +356,8 @@ class A1(VecTask):
                                   "gaitCommands": self.gait_commands,
                                   "heightCommands": self.height_commands,
                                   "feetPositionRelHip": self.feet_position_hip,
-                                  "feetLinVelRelHip": self.feet_lin_vel_body}
+                                  "feetLinVelRelHip": self.feet_lin_vel_body,
+                                  "gaitParamsAct": self.gait_params_act}
 
         self.obs_combination = self.cfg["env"]["learn"]["observationConfig"]["combination"]
         for key in self.obs_combination.keys():
@@ -385,13 +400,20 @@ class A1(VecTask):
                                           requires_grad=False)
         self.dof_order_obs = torch.arange(12, dtype=torch.int64, device=self.device, requires_grad=False)
         self.dof_order_act = torch.arange(12, dtype=torch.int64, device=self.device, requires_grad=False)
-
+        self.schedule_random()
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
         # self.compute_observations()
         self.init_done = True
 
         self.mit_controller = VecControllerBridge(self.num_envs, self.cfg["num_controller_threads"], self.device)
         # self.motion_planning_interface = MotionPlanningInterface(self.num_envs, 28, self.device)
+
+        # lower gait tracking layer
+        self.gait_tracking_policy = GaitTrackingPolicy(7, 77, [512, 256, 128])
+        self.gait_tracking_policy.to(self.device)
+        self.gait_tracking_policy.eval()
+        self.normalize_gait_tracking_input = True
+        self.restore_gait_tracking_policy("/home/wsh/Documents/pyProjects/IsaacGymEnvs/isaacgymenvs/runs/A1_2023-10-19_18-12-18(gait_transition_2)/nn/A1.pth")
 
         self.record_data = np.expand_dims(np.arange(57), axis=0)
         self.record_data_test = np.expand_dims(np.arange(116), axis=0)
@@ -579,7 +601,7 @@ class A1(VecTask):
             ## wsh_annotation: set friction and restitution of robots
             for s in range(len(rigid_shape_prop)):
                 rigid_shape_prop[s].friction = self.friction_coeffs[i]
-                # rigid_shape_prop[s].friction = -0.8
+                # rigid_shape_prop[s].friction = -0.6
             #     # rigid_shape_prop[s].restitution = restitution_buckets[i % num_buckets]
             #     rigid_shape_prop[s].friction = 1.
             #     rigid_shape_prop[s].rolling_friction = 0.
@@ -622,7 +644,7 @@ class A1(VecTask):
         print("envs created!")
 
     def _heading_to_omega(self, heading):
-        return torch.clip(0.8 * wrap_to_pi(self.commands[:, 3] - heading), -3., 3.)
+        return torch.clip(0.8 * wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
     #
     # def check_termination(self):
     #     self.reset_buf[:] = torch.norm(self.contact_forces[:, self.base_index, :], dim=1) > 1.
@@ -671,7 +693,7 @@ class A1(VecTask):
         # self.modify_vel_command()
         # self.commands[:, 0] = 1.0
 
-        self.modify_desired_gait_command()
+        # self.modify_desired_gait_command()
         self.modify_desired_height_command()
 
         self.record_commands()
@@ -722,17 +744,17 @@ class A1(VecTask):
         # velocity tracking reward
         lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
         # lin_vel_error = torch.sum(self.base_lin_vel_error_square_accumulated[:, :2], dim=1) / self.decimation
-        # tmp_lin_vel_error = self.commands[:, :2] - self.base_lin_vel[:, :2]
-        # tmp_lin_vel_error = torch.where(torch.abs(tmp_lin_vel_error) < torch.abs(self.commands[:, :2]) * 0.1, torch.zeros_like(tmp_lin_vel_error), tmp_lin_vel_error)
-        # # tmp_lin_vel_error = torch.where(self.commands[:, :2] * tmp_lin_vel_error < 0, torch.zeros_like(tmp_lin_vel_error), tmp_lin_vel_error)
-        # lin_vel_error = torch.sum(torch.square(tmp_lin_vel_error), dim=1)
+        tmp_lin_vel_error = self.commands[:, :2] - self.base_lin_vel[:, :2]
+        tmp_lin_vel_error = torch.where(torch.abs(tmp_lin_vel_error) < torch.abs(self.commands[:, :2]) * 0.1, torch.zeros_like(tmp_lin_vel_error), tmp_lin_vel_error)
+        # tmp_lin_vel_error = torch.where(self.commands[:, :2] * tmp_lin_vel_error < 0, torch.zeros_like(tmp_lin_vel_error), tmp_lin_vel_error)
+        lin_vel_error = torch.sum(torch.square(tmp_lin_vel_error), dim=1)
         rew_lin_vel_xy = torch.exp(-lin_vel_error / 0.25) * self.rew_scales["lin_vel_xy"]
         # rew_lin_vel_xy = torch.where((self.commands[:, :2] * tmp_lin_vel_error <= 0).all(dim=-1), rew_lin_vel_xy+0.5, rew_lin_vel_xy)
 
         ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
-        # tmp_ang_vel_error = self.commands[:, 2] - self.base_ang_vel[:, 2]
-        # tmp_ang_vel_error = torch.where(torch.abs(tmp_ang_vel_error) < torch.abs(self.commands[:, 2]) * 0.1, torch.zeros_like(tmp_ang_vel_error), tmp_ang_vel_error)
-        # ang_vel_error = torch.square(tmp_ang_vel_error)
+        tmp_ang_vel_error = self.commands[:, 2] - self.base_ang_vel[:, 2]
+        tmp_ang_vel_error = torch.where(torch.abs(tmp_ang_vel_error) < torch.abs(self.commands[:, 2]) * 0.1, torch.zeros_like(tmp_ang_vel_error), tmp_ang_vel_error)
+        ang_vel_error = torch.square(tmp_ang_vel_error)
         rew_ang_vel_z = torch.exp(-ang_vel_error / 0.25) * self.rew_scales["ang_vel_z"]
         # rew_ang_vel_z = torch.exp(-torch.abs(self.euler_xyz[2]))
 
@@ -883,7 +905,7 @@ class A1(VecTask):
 
         # print(f"v_x_mean: {v_x_mean}")
         # print(f"v_y_mean: {v_y_mean}")
-        print(f"v_yaw_mean: {v_yaw_mean}")
+        # print(f"v_yaw_mean: {v_yaw_mean}")
         # print(self.obs_buffer_dict["linearVelocity"].get_latest_data_raw()[0][0])
 
         # rew_base_height = torch.square(body_height_mean - self.desired_base_height) * self.rew_scales["base_height"]
@@ -1073,7 +1095,7 @@ class A1(VecTask):
             if key == "commands":  ### wsh_annotation: command history is zero
                 self.obs_buffer_dict[key].reset_and_fill_index(env_ids, torch.zeros(len(env_ids), 3, dtype=torch.float, device=self.device, requires_grad=False))
             elif key == "gaitCommands":
-                self.obs_buffer_dict[key].reset_and_fill_index(env_ids, torch.tensor(len(env_ids)*[[0.25, 0.5, 0.5, 0.5, 0.0, 0.0]], dtype=torch.float, device=self.device, requires_grad=False))
+                self.obs_buffer_dict[key].reset_and_fill_index(env_ids, torch.tensor(len(env_ids)*[[0.5, 0.5, 0.5, 0.5, 0.0, 0.0]], dtype=torch.float, device=self.device, requires_grad=False))
             elif key == "heightCommands":
                 self.obs_buffer_dict[key].reset_and_fill_index(env_ids, torch.tensor(len(env_ids) * [[0.3]], dtype=torch.float, device=self.device,requires_grad=False))
             else:
@@ -1099,6 +1121,7 @@ class A1(VecTask):
 
         self.compute_observations()
         self.gait_params_act_last[env_ids] = torch.zeros_like(self.gait_params_act_last[env_ids])
+        self.gait_params_act_raw_last[env_ids] = torch.zeros_like(self.gait_params_act_raw_last[env_ids])
         self.phase_overwrite_last[env_ids] = 0.0
         self.gait_period_tracking_error_last[env_ids] = 0.0
 
@@ -1125,112 +1148,64 @@ class A1(VecTask):
         # wsh_annotation: TODO(!!!) How about add external forces ??
         env_ids = (self.progress_buf % self.push_random_count == 0).nonzero(as_tuple=False).flatten()
         env_ids_int32 = env_ids.to(dtype=torch.int32)
-        self.root_states[env_ids, 7:9] = torch_rand_float(-1., 1., (len(env_ids), 2), device=self.device)  # lin vel x/y
-        # self.root_states[env_ids, 7:9] = torch.tensor([0., 2.], device=self.device)
+        self.root_states[env_ids, 7:9] = torch_rand_float(self.scheduled_push_velocity_range[0], self.scheduled_push_velocity_range[1], (len(env_ids), 2), device=self.device)  # lin vel x/y
+        # self.root_states[env_ids, 7:9] = torch.tensor([2., 0], device=self.device)
         self.gym.set_actor_root_state_tensor_indexed(self.sim,
                                                      gymtorch.unwrap_tensor(self.root_states),
                                                      gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
+        # if len(env_ids):
+        #     if env_ids[0] == 0:
+        #         print("push-push-push-push-push-push-push-push-push-push-push")
 
     def pre_physics_step(self, actions):
         # t = time.time()
-        # print(f"time_step: {(t - self.time_step)} s")
-        # self.time_step = t
-        # print(self.commands)
-        ### wsh_annotation: TODO feed forward torque
+
         self.actions[:] = actions.clone().to(self.device) * self.action_scale
-        # dof_pos_comp = self.action_scale * self.actions * 0
-        # dof_pos_desired = self.action_scale * self.actions + self.default_dof_pos
-        # print(self.actions[:10])
-        # self.actions[:, [0, 3, 6, 9]] = 0.
-        # dof_pos_desired = self.actions.clone() * self.action_scale
-        # dof_pos_desired[:, [0, 3, 6, 9]] *= 0.15
-        # dof_pos_desired[:, [1, 4, 7, 10]] *= 0.4
-        # dof_pos_desired[:, [2, 5, 8, 11]] *= 0.4
-        # dof_pos_desired[:, [0, 3, 6, 9]] *= 0.8
-        # dof_pos_desired[:, [1, 4, 7, 10]] = 1.325 * dof_pos_desired[:, [1, 4, 7, 10]] - 0.525
-        # dof_pos_desired[:, [2, 5, 8, 11]] = 0.887 * dof_pos_desired[:, [2, 5, 8, 11]] - 0.213
-        # dof_pos_desired = self.action_scale * self.actions
-        # dof_pos_desired += self.default_dof_pos
-        # dof_pos_desired = self.default_dof_pos
-        # tt = 15. * self.actions
 
-        # gait_period_offset = self.actions[:, 0].unsqueeze(-1).repeat(1, 4) * self.action_scale
-        # gait_duty_cycle_offset = self.actions[:, 1].unsqueeze(-1).repeat(1, 4) * self.action_scale
-        # gait_phase_offset = self.actions[:, 8:] * 0.5
-        # gait_phase_offset[:, 1:3] += 0.5
-        # print("gait period:")
-        # print(gait_period_offset[:, 0] + 0.5)
-        # print("gait duty:")
-        # print(gait_duty_cycle_offset[:, 0] + 0.5)
-        # print('')
+        # ------------------------------------------- action to gait -------------------------------------------
+        # self.gait_period_act = (self.actions[:, 0].unsqueeze(-1) + 1.0) * 0.5  # [0, 1]
+        # duty = (self.actions[:, 1].unsqueeze(-1) + 1.0) * 0.5
+        # gait_period_offset = (self.gait_period_act - 0.5).repeat(1, 4)
+        # gait_duty_cycle_offset = (duty - 0.5).repeat(1, 4)
+        # gait_phase_offset = torch.zeros_like(self.actions[:, 2:6])
+        # gait_phase_offset[:, :3] = (self.actions[:, 2:5] + 1.0) * 0.5  # [0, 1]
+        # gait_phase_offset[:, 3] = self.calculate_phase(self.actions[:, 5], self.actions[:, 6])
+        # self.gait_params_act[:] = torch.cat([self.gait_period_act, duty, gait_phase_offset.clone()], dim=-1)
+        # ----------------------------------------------------------------------------------------------------
 
-        # body_height_offset = self.actions * 0.01
-        # body_orientation = torch.zeros_like(self.base_ang_vel)
-        # body_orientation[:, :2] = self.actions[:, 1:] * 0.2
-        # body_height_offset[:] = 0.0
-        # print(f"body_height_offset: {body_height_offset*1000} mm")
-        # print(f"body_height_real: {(self.root_states[:, 2] - 0.3) * 1000} mm")
-
-        # gait_period_offset = torch.zeros_like(self.feet_contact_state) + (torch.rand(self.num_envs, 1, dtype=float, device=self.device) * 2 - 1) * 0.2
-
-
-
-        # stance_time = torch.clip(self.actions[:, 0].clone(), torch.zeros_like(self.actions[:, 0]), None).unsqueeze(-1)  # [0, 1]
-        # stance_time = (self.actions[:, 0].unsqueeze(-1) + 1.0) * 0.5  # [0, 1]
-        # duty = (self.actions[:, 1].unsqueeze(-1) + 1.0) * 0.5  # [0, 1]
-        # duty_clip = torch.clip(duty, torch.zeros_like(duty) + 1.e-3, None)  # [0.001, 1]
-        # self.gait_period_act = stance_time / duty_clip
-
-        self.gait_period_act = (self.actions[:, 0].unsqueeze(-1) + 1.0) * 0.5  # [0, 1]
-        duty = (self.actions[:, 1].unsqueeze(-1) + 1.0) * 0.5
-
+        self.gait_commands[:, :5] = (self.actions[:, :5] + 1.0) * 0.5  # [0, 1]
+        self.gait_commands[:, 5] = 0.
+        gait_tracked = self.gait_tracking(self.gait_commands, self.gait_params_act_raw_last, self.obs_buf.clone().detach()) * 0.25
+        self.gait_period_act = (gait_tracked[:, 0].unsqueeze(-1) + 1.0) * 0.5  # [0, 1]
+        duty = (gait_tracked[:, 1].unsqueeze(-1) + 1.0) * 0.5
         gait_period_offset = (self.gait_period_act - 0.5).repeat(1, 4)
         gait_duty_cycle_offset = (duty - 0.5).repeat(1, 4)
-        # gait_phase_offset = torch.clip(self.actions[:, 2:6].clone(), torch.zeros_like(self.actions[:, 2:6]), None)  # [0, 1]
-        gait_phase_offset = torch.zeros_like(self.actions[:, 2:6])
-        gait_phase_offset[:, :3] = (self.actions[:, 2:5] + 1.0) * 0.5  # [0, 1]
-        gait_phase_offset[:, 3] = self.calculate_phase(self.actions[:, 5], self.actions[:, 6])
+        gait_phase_offset = torch.zeros_like(gait_tracked[:, 2:6])
+        gait_phase_offset[:, :3] = (gait_tracked[:, 2:5] + 1.0) * 0.5  # [0, 1]
+        gait_phase_offset[:, 3] = self.calculate_phase(gait_tracked[:, 5], gait_tracked[:, 6])
         self.gait_params_act[:] = torch.cat([self.gait_period_act, duty, gait_phase_offset.clone()], dim=-1)
-        # body_height = self.actions[:, 6].unsqueeze(-1).clone() * 0.08 + 0.28  # [0.2, 0.36]
-        # body_height_offset = body_height - 0.3
-        # body_height_offset = self.height_commands - 0.3
-        # body_orientation = torch.zeros_like(self.actions[:, 6:9])
-        # body_orientation[:, :2] = self.actions[:, 6:8] * 0.5
-        # body_orientation[:, 2] = 0.0
-        # vel_commands = self.actions[:, 9:12].clone()
-        # vel_commands[0] = (vel_commands[0] + 1.0) * 1.5  # [0, 3]
-        # vel_commands[2] *= 4.0  # [-3., 3.]
+        self.gait_params_act_raw_last = gait_tracked.clone()
 
-        # self.des_feet_pos_rel_hip[:] = self.actions[:, 0:].clone()
-        # self.des_feet_pos_rel_hip[:, [0, 3, 6, 9]] *= 0.3  # x->[-0.3, 0.3]
-        # self.des_feet_pos_rel_hip[:, [1, 4, 7, 10]] *= 0.26  # y->[-0.26, 0.26]
-        # self.des_feet_pos_rel_hip[:, [2, 5, 8, 11]] = self.des_feet_pos_rel_hip[:, [2, 5, 8, 11]] * 0.08 - 0.26  # z->[-0.34, -0.18]
 
-        # self.phase_overwrite = (self.actions[:, 0] + 1.0) * 0.5
-        # body_orientation = torch.zeros_like(self.actions[:, :3])
-        # body_orientation[:, :2] = self.actions[:, 1:3] * 0.5
-        # body_orientation[:, 2] = 0.0
+        # ------------------------------------------- follow gait commands -------------------------------------------
         # gait_period_offset = (self.gait_periods - 0.5).unsqueeze(-1)
         # gait_duty_cycle_offset = (self.gait_commands[:, 1] - 0.5).unsqueeze(-1)
         # gait_phase_offset = self.gait_commands[:, 2:6].clone()
-        # gait_phase_offset[:, 3] = self.phase_overwrite
+        # ------------------------------------------------------------------------------------------------------------
 
+
+        # ------------------------------------------- motion planning interface --------------------------------------
         body_height_offset = self.height_commands - 0.3
         body_orientation = torch.zeros_like(self.base_ang_vel)
-
         gait_phase_offset[:, :2] -= 0.5
         # print(self.gait_params_act[0])
-
         self.motion_planning_interface.update_gait_planning(True, gait_period_offset, gait_duty_cycle_offset, gait_phase_offset, None)
         self.motion_planning_interface.update_body_planning(True, body_height_offset, body_orientation, None, None, self.commands[:, :3])
         self.motion_planning_interface.update_des_feet_pos_rel_hip(self.des_feet_pos_rel_hip)
         self.motion_planning_interface.generate_motion_command()
+        # ------------------------------------------------------------------------------------------------------------
 
-        # print(self.base_lin_vel[0][0])
-        # print("gait_duty_cycle", (gait_duty_cycle_offset + 0.5)[0])
-        # print("gait_phase_offset", gait_phase_offset[0])
-
-        # torques = torch.zeros_like(self.torques)
+        # dof_pos_desired = self.actions + self.default_dof_pos
 
         kp = torch.zeros_like(self.dof_pos[0])
         kd = torch.zeros_like(self.dof_pos[0])
@@ -1247,6 +1222,7 @@ class A1(VecTask):
             torques, tau_ff, q_des, qd_des = self.mit_controller.step_run(self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state, self.motion_planning_interface.get_motion_command())  # self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state
             self.motion_planning_interface.change_gait_planning(False)
             self.motion_planning_interface.change_body_planning(False)
+
             # torques1 = torch.clip(tau_ff + kp * (q_des + dof_pos_comp - self.dof_pos) + kd * (qd_des - self.dof_vel), -tau_max, tau_max)
             # print(f"kp: {kp}")
             # print(f"kd: {kd}")
@@ -1280,6 +1256,7 @@ class A1(VecTask):
             # self.torques_square_accumulated += torch.square(torques)
 
         torques, tau_ff, q_des, qd_des = self.mit_controller.step_run(self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state, self.motion_planning_interface.get_motion_command())
+
         # torques1 = torch.clip(tau_ff + kp * (q_des + dof_pos_comp - self.dof_pos) + kd * (qd_des - self.dof_vel), -tau_max, tau_max)
 
         # torques[:] = tt
@@ -1312,6 +1289,7 @@ class A1(VecTask):
         self.progress_buf += 1
         self.randomize_buf += 1
         self.common_step_counter += 1
+        self.schedule_random()
         # if self.push_flag and self.common_step_counter % self.push_interval == 0:  ### wsh_annotation: self.push_interval > 0
         #     self.push_robots()
 
@@ -1557,27 +1535,31 @@ class A1(VecTask):
 
     def modify_vel_command(self):
         env_ids = (self.progress_buf % self.commands_change_random_count == 0).nonzero(as_tuple=False).flatten()
-        self.commands[env_ids, 0] = torch_rand_float(self.command_x_range[0], self.command_x_range[1],
+        self.commands[env_ids, 0] = torch_rand_float(self.scheduled_command_x_range[0], self.scheduled_command_x_range[1],
                                                      (len(env_ids), 1), device=self.device).squeeze()
-        self.commands[env_ids, 1] = torch_rand_float(self.command_y_range[0], self.command_y_range[1],
+        self.commands[env_ids, 1] = torch_rand_float(self.scheduled_command_y_range[0], self.scheduled_command_y_range[1],
                                                      (len(env_ids), 1), device=self.device).squeeze()
-        self.commands[env_ids, 3] = torch_rand_float(self.command_yaw_range[0], self.command_yaw_range[1],
+        self.commands[env_ids, 3] = torch_rand_float(self.scheduled_command_yaw_range[0], self.scheduled_command_yaw_range[1],
                                                      (len(env_ids), 1), device=self.device).squeeze()
 
-        # self.commands[:, 0] = 2
+        # self.commands[:, 0] = 1.8
         self.commands[:, 1] = 0.0
         self.commands[:, 3] = 0.0
+        # if self.common_step_counter % 120 > 60:
+        #     self.commands[:, 3] = 3
+        # else:
+        #     self.commands[:, 3] = 0
 
         # calculate omega command
         forward = quat_apply(self.base_quat, self.forward_vec)
         heading = torch.atan2(forward[:, 1], forward[:, 0])
         self.commands[:, 2] = self._heading_to_omega(heading)
 
-        # self.commands[:, 2] = 2.
-        if self.common_step_counter % 120 > 60:
-            self.commands[:, 2] = 3.
-        else:
-            self.commands[:, 2] = 0.
+        # self.commands[:, 2] = 9.
+        # if self.common_step_counter % 120 > 90:
+        #     self.commands[:, 2] = 5.
+        # else:
+        #     self.commands[:, 2] = 0.
 
         self.commands[:] *= ~((self.commands[:, :3].abs() < self.xy_velocity_threshold).all(dim=-1)).unsqueeze(1)
 
@@ -1605,49 +1587,48 @@ class A1(VecTask):
         # self.obs_buffer_dict["commands"].record(self.obs_name_to_value["commands"])
 
     def modify_desired_gait_command(self):
-        env_ids = (self.progress_buf % self.gait_commands_change_random_count == 0).nonzero(as_tuple=False).flatten()
-        self.gait_commands[env_ids, 0] = torch_rand_float(self.command_gait_period_range[0],
-                                                          self.command_gait_period_range[1],
-                                                          (len(env_ids), 1),
-                                                          device=self.device).squeeze()
-        self.gait_commands[env_ids, 1] = torch_rand_float(self.command_gait_duty_range[0],
-                                                          self.command_gait_duty_range[1],
-                                                          (len(env_ids), 1),
-                                                          device=self.device).squeeze()
-        self.gait_commands[env_ids, 2:5] = torch_rand_float(self.command_gait_offset_range[0],
-                                                            self.command_gait_offset_range[1],
-                                                            (len(env_ids), 3),
-                                                            device=self.device)  # [FL RR RL FR]
-        self.gait_commands[env_ids, 5] = 0.0
+        # env_ids = (self.progress_buf % self.gait_commands_change_random_count == 0).nonzero(as_tuple=False).flatten()
+        # self.gait_commands[env_ids, 0] = torch_rand_float(self.command_gait_period_range[0],
+        #                                                   self.command_gait_period_range[1],
+        #                                                   (len(env_ids), 1),
+        #                                                   device=self.device).squeeze()
+        # self.gait_commands[env_ids, 1] = torch_rand_float(self.command_gait_duty_range[0],
+        #                                                   self.command_gait_duty_range[1],
+        #                                                   (len(env_ids), 1),
+        #                                                   device=self.device).squeeze()
+        # self.gait_commands[env_ids, 2:5] = torch_rand_float(self.command_gait_offset_range[0],
+        #                                                     self.command_gait_offset_range[1],
+        #                                                     (len(env_ids), 3),
+        #                                                     device=self.device)  # [FL RR RL FR]
+        # self.gait_commands[env_ids, 5] = 0.0
+        #
+        # # self.gait_commands[env_ids, 2] = 0.5
+        # # self.gait_commands[env_ids, 3] = 0.5
+        # # self.gait_commands[env_ids, 4] = 0.0
+        #
+        # self.gait_periods[env_ids] = self.gait_commands[env_ids, 0]
 
-        # self.gait_commands[env_ids, 2] = 0.5
-        # self.gait_commands[env_ids, 3] = 0.5
-        # self.gait_commands[env_ids, 4] = 0.0
-
-        self.gait_periods[env_ids] = self.gait_commands[env_ids, 0]
-
-        # specific commands
-        # if self.common_step_counter == 0:
-        #     self.specific_gait_dict = {}
-        #     self.specific_gait_dict["walk"] = torch.tensor([0.5, 0.5, 0.5, 0.25, 0.75, 0.0], device=self.device)
-        #     self.specific_gait_dict["trot"] = torch.tensor([0.3, 0.5, 0.5, 0.5, 0.0, 0.0], device=self.device)
-        #     self.specific_gait_dict["flying_trot"] = torch.tensor([0.5, 0.26, 0.5, 0.5, 0.0, 0.0], device=self.device)
-        #     self.specific_gait_dict["pace"] = torch.tensor([0.36, 0.5, 0.5, 0.0, 0.5, 0.0], device=self.device)
-        #     self.specific_gait_dict["bound"] = torch.tensor([0.3, 0.4, 0.0, 0.5, 0.5, 0.0], device=self.device)
-        #     self.specific_gait_dict["jump"] = torch.tensor([0.2, 0.5, 0.0, 0.0, 0.0, 0.0], device=self.device)
-        #     self.specific_gait_dict["transverse_gallop"] = torch.tensor([0.24, 0.3, 0.25, 0.6, 0.85, 0.0], device=self.device)
-        #     self.specific_gait_dict["random"] = torch.tensor([0.3, 0.2, 0.3, 0.7, 0.7, 0.0], device=self.device)
-        # if self.common_step_counter % 55 == 0:
-        #     # tmp_gaits = list(self.specific_gait_dict.values())
-        #     # index = torch.randint(0, len(tmp_gaits), (1,)).item()
-        #     # self.gait_commands[:, :] = tmp_gaits[index]
-        #     self.gait_commands[:, :] = self.specific_gait_dict["trot"]
-        #     if self.common_step_counter % 110 == 0:
-        #         self.gait_commands[:, :] = self.specific_gait_dict["trot"]
-        #         print("to flying_trot")
-        #     else:
-        #         print("to transverse_gallop")
-        #     self.gait_periods[:] = self.gait_commands[:, 0]
+        # ----------------------------------- specific commands -----------------------------------
+        if self.common_step_counter == 0:
+            self.specific_gait_dict = {}
+            self.specific_gait_dict["walk"] = torch.tensor([0.5, 0.5, 0.5, 0.25, 0.75, 0.0], device=self.device)
+            self.specific_gait_dict["trot"] = torch.tensor([0.6, 0.5, 0.5, 0.5, 0.0, 0.0], device=self.device)
+            self.specific_gait_dict["flying_trot"] = torch.tensor([0.5, 0.35, 0.5, 0.5, 0.0, 0.0], device=self.device)
+            self.specific_gait_dict["pace"] = torch.tensor([0.3, 0.7, 0.5, 0.0, 0.5, 0.0], device=self.device)
+            self.specific_gait_dict["bound"] = torch.tensor([0.3, 0.3, 0.0, 0.5, 0.5, 0.0], device=self.device)
+            self.specific_gait_dict["jump"] = torch.tensor([0.2, 0.5, 0.0, 0.0, 0.0, 0.0], device=self.device)
+            self.specific_gait_dict["transverse_gallop"] = torch.tensor([0.24, 0.3, 0.25, 0.6, 0.85, 0.0], device=self.device)
+            self.specific_gait_dict["random"] = torch.tensor([0.3, 0.2, 0.3, 0.7, 0.7, 0.0], device=self.device)
+        if self.common_step_counter % 43 == 0:
+            # tmp_gaits = list(self.specific_gait_dict.values())
+            # index = torch.randint(0, len(tmp_gaits), (1,)).item()
+            # self.gait_commands[:, :] = tmp_gaits[index]
+            self.gait_commands[:, :] = self.specific_gait_dict["pace"]
+            # print("to transverse_gallop")
+        if self.common_step_counter % 94 == 0:
+            self.gait_commands[:, :] = self.specific_gait_dict["trot"]
+            # print("to flying_trot")
+        self.gait_periods[:] = self.gait_commands[:, 0]
 
         # self.gait_periods[env_ids] = torch.where(self.gait_commands[env_ids, 0] < 1.e-3,
         #                                          torch.ones_like(self.gait_periods[env_ids]),
@@ -1678,6 +1659,100 @@ class A1(VecTask):
         theta = torch.where(theta < 0, theta + 2 * torch.pi, theta)
         phase = theta / (2 * torch.pi)
         return phase
+
+    def schedule_random(self):
+        if self.if_schedule_command:
+            if self.common_step_counter == 24 * 0:
+                self.scheduled_command_x_range[0] = 0.
+                self.scheduled_command_x_range[1] = 0.6
+                self.scheduled_command_y_range[0] = -0.1
+                self.scheduled_command_y_range[1] = 0.1
+                self.scheduled_command_yaw_range[0] = -0.1
+                self.scheduled_command_yaw_range[1] = 0.1
+                self.scheduled_push_velocity_range[0] = -0.1
+                self.scheduled_push_velocity_range[1] = 0.1
+            elif self.common_step_counter == 24 * 200:
+                self.scheduled_command_x_range[0] = 0.
+                self.scheduled_command_x_range[1] = 1.
+                self.scheduled_command_y_range[0] = -0.2
+                self.scheduled_command_y_range[1] = 0.2
+                self.scheduled_command_yaw_range[0] = -0.6
+                self.scheduled_command_yaw_range[1] = 0.6
+                self.scheduled_push_velocity_range[0] = -0.2
+                self.scheduled_push_velocity_range[1] = 0.2
+            elif self.common_step_counter == 24 * 400:
+                self.scheduled_command_x_range[0] = 0.
+                self.scheduled_command_x_range[1] = 1.5
+                self.scheduled_command_y_range[0] = -0.5
+                self.scheduled_command_y_range[1] = 0.5
+                self.scheduled_command_yaw_range[0] = -1.5
+                self.scheduled_command_yaw_range[1] = 1.5
+                self.scheduled_push_velocity_range[0] = -0.5
+                self.scheduled_push_velocity_range[1] = 0.5
+            elif self.common_step_counter == 24 * 700:
+                self.scheduled_command_x_range[0] = 0.
+                self.scheduled_command_x_range[1] = 2.
+                self.scheduled_command_y_range[0] = -0.8
+                self.scheduled_command_y_range[1] = 0.8
+                self.scheduled_command_yaw_range[0] = -2.
+                self.scheduled_command_yaw_range[1] = 2.
+                self.scheduled_push_velocity_range[0] = -1.
+                self.scheduled_push_velocity_range[1] = 1.
+            elif self.common_step_counter == 24 * 1100:
+                self.scheduled_command_x_range[0] = 0.
+                self.scheduled_command_x_range[1] = 2.5
+                self.scheduled_command_y_range[0] = -1.
+                self.scheduled_command_y_range[1] = 1.
+                self.scheduled_command_yaw_range[0] = -2.5
+                self.scheduled_command_yaw_range[1] = 2.5
+                self.scheduled_push_velocity_range[0] = -1.5
+                self.scheduled_push_velocity_range[1] = 1.5
+            elif self.common_step_counter == 24 * 1500:
+                self.scheduled_command_x_range[0] = 0.
+                self.scheduled_command_x_range[1] = 3.
+                self.scheduled_command_y_range[0] = -1.2
+                self.scheduled_command_y_range[1] = 1.2
+                self.scheduled_command_yaw_range[0] = -3.14
+                self.scheduled_command_yaw_range[1] = 3.14
+                self.scheduled_push_velocity_range[0] = -2.
+                self.scheduled_push_velocity_range[1] = 2.
+
+    def gait_tracking(self, desired_gait, gait_params_act_raw_last, obs):
+        obs_shaped = torch.cat([desired_gait, obs[:, :36], gait_params_act_raw_last, obs[:, 47:75]], dim=-1)
+        with torch.no_grad():
+            return self.gait_tracking_policy(obs_shaped.clone().detach())
+
+    def restore_gait_tracking_policy(self, fn):
+        from rl_games.algos_torch import torch_ext
+        from collections import OrderedDict
+
+        model_params = torch_ext.load_checkpoint(fn)['model']
+        actor_net_strings = ['actor_mlp', 'mu']
+        actor_net_params = OrderedDict()
+        for key, value in model_params.items():
+            for search_string in actor_net_strings:
+                if search_string in key:
+                    actor_net_params[key] = value
+                    break
+        self.gait_tracking_policy.load_state_dict(actor_net_params, strict=False)
+
+        if self.normalize_gait_tracking_input:
+            input_normalize_strings = ['running_mean_std']
+            input_normalize_params = OrderedDict()
+            for key, value in model_params.items():
+                # Check if any of the search strings are in the key
+                if any(item in key for item in input_normalize_strings):
+                    # Iterate over all occurrences of the search strings in the key
+                    for search_string in input_normalize_strings:
+                        for i in range(len(key) - len(search_string) + 1):
+                            # Extract the portion of the key value that contains the search string
+                            substring = key[i:i + len(search_string)]
+                            if substring == search_string and i + len(search_string) < len(key) - 1:
+                                input_normalize_params[key[i + len(search_string) + 1:]] = value
+                                break
+            if input_normalize_params:
+                self.gait_tracking_policy.running_mean_std.load_state_dict(input_normalize_params)
+        print("gait tracking policy actor net initialized.")
 
 
 # terrain generator

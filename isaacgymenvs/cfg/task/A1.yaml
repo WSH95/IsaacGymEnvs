@@ -1,20 +1,20 @@
 # used to create the object
 name: A1
 
-description: ""
+description: "learn-gait_lower-power"
 
 physics_engine: 'physx'
 num_controller_threads: 26
 
 env:
   numEnvs: ${resolve_default:4096,${...num_envs}}
-  numObservations: 77 # 418 # 48 # 52 # 163
-  numActions: 7
+  numObservations: 75 # 77 # 418 # 48 # 52 # 163
+  numActions: 5
   envSpacing: 3.  # [m]
   enableDebugVis: false
 
 #  clipObservations: 5.0
-  clipActions: 4.0  # 4.8
+  clipActions: 4 # 4.0  # 4.8
 
   urdfAsset:
     file: "urdf/a1/urdf/a1_old.urdf"
@@ -94,22 +94,22 @@ env:
     allowKneeContacts: true
     # rewards
     terminalReward: 0 # 0.0
-    linearVelocityXYRewardScale: 0.01 # 1.5
-    linearVelocityZRewardScale: -0.01 # -1.0
-    angularVelocityXYRewardScale: -0.01 # -0.05
-    angularVelocityZRewardScale: 0.01 # 0.5
-    orientationRewardScale: -1. # -1.0
-    torquesRewardScale: -1.0e-5 # -1.0e-5
-    deltaTorquesRewardScale: -1.0e-7 # -1.0e-7
-    jointAccRewardScale: -2.5e-9 # -2.5e-7
-    baseHeightRewardScale: -0 # -0.0
+    linearVelocityXYRewardScale: 1. # 1.5
+    linearVelocityZRewardScale: -0. # -1.0
+    angularVelocityXYRewardScale: -0. # -0.05
+    angularVelocityZRewardScale: 0.1 # 0.5
+    orientationRewardScale: -0. # -1.0
+    torquesRewardScale: -0.0 # -1.0e-5
+    deltaTorquesRewardScale: -0. # -1.0e-7
+    jointAccRewardScale: -0. # -2.5e-7
+    baseHeightRewardScale: -0. # -0.0
     feetAirTimeRewardScale: 0.0 # 0.0
     kneeCollisionRewardScale: -10. # -10.0
     fallenOverRewardScale: -0.0 # -0.0
     feetStumbleRewardScale: -0. #-1.0
     actionRateRewardScale: -0.0 #-0.1
     energyRewardScale: -0.0 # -0.0
-    powerRewardScale: -0. # -0.0
+    powerRewardScale: -0.002 # -0.0
     power_max_mean_each: -0 # -0.0
     power_max_mean_std: -0 # -0.0
     feet_max_force_total: -0 # -0.0
@@ -117,18 +117,18 @@ env:
     torque_max_mean_each: -0 # -0.0
     torque_max_mean_std: -0.0 # -0.0
     # cosmetics
-    hipRewardScale: -0. # -0.5
+    hipRewardScale: -0.0 # -0.5
     dofBiasRewardScale: -0.0 # -0.04
     #gait
-    gaitTrackingScale: 3.0
-    gaitTransRateScale: -0.04
-    gaitPhaseTimingScale: 3.
-    gaitPhaseShapeScale: -0.002
+    gaitTrackingScale: 5.e-4 # 3.0
+    gaitTransRateScale: -0.04 # -0.04
+    gaitPhaseTimingScale: 0. # 3.
+    gaitPhaseShapeScale: 0. # -0.002
 
     observationConfig:
       addNoise: true
       combination:
-        gaitCommands: 0
+#        gaitCommands: 0
         heightCommands: 0
         linearVelocity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
         angularVelocity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
@@ -139,7 +139,10 @@ env:
         dofPosition: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
 #        dofPositionRelInit: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
         dofVelocity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
+
         lastAction: 0 # size -> 8
+        gaitParamsAct: 0
+
         feetPositionRelHip: 0
         feetLinVelRelHip: 0
         feetContactState: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 4
@@ -183,7 +186,7 @@ env:
           scale: [ 2.0, 2.0, 0.25 ]
           noise: 0
         lastAction:
-          size: 7
+          size: 5
           bufferLength: 1
           scale: 1.0
           noise: 0
@@ -233,6 +236,11 @@ env:
           bufferLength: 1
           scale: 1.0
           noise: 0
+        gaitParamsAct:
+          size: 6
+          bufferLength: 1
+          scale: 1.0
+          noise: 0
         heightCommands:
           size: 1
           bufferLength: 1
@@ -268,22 +276,24 @@ env:
 
     #randomization
     randomizeContactParams: true
-    frictionRange: [ 0.0, 1.4 ]
+    frictionRange: [ 0.6, 2.0 ]
     restitutionRange: [ 0.0, 0.5 ]
-    armatureRange: [0.0, 0.02]
+    armatureRange: [0.0, 0.014]
     pushRobots: false
     pushInterval_s: [7., 11.] # [7., 11.]
+    randomPushRanges:
+      velocity: [ -2., 2. ]
 
     # episode length in seconds
     episodeLength_s: 30
 
-    commands_change_s: [7., 11.]
-    gait_commands_change_s: [3, 3.03] # [3., 5.]
+    commands_change_s: [36., 37.] # not change in an episode if greater than episodeLength_s
+    gait_commands_change_s: [3., 5.] # [3., 5.]
     height_commands_change_s: [7., 11.]
 
     randomCommandVelocityRanges:
       # train
-      linear_x: [ 0., 2. ] # min max [m/s]
+      linear_x: [ 0., 3. ] # min max [m/s]
       linear_y: [ -1., 1. ]   # min max [m/s]
       yaw: [ -3.14, 3.14 ]    # min max [rad/s]
 
@@ -292,6 +302,8 @@ env:
       duty: [0.2, 0.7]
       offset: [0.0, 1.0]
     randomCommandHeightRanges: [0.2, 0.36]
+
+    ifScheduleCommand: true
 
   # viewer cam:
   viewer:
