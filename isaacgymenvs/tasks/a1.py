@@ -143,6 +143,7 @@ class A1(VecTask):
         self.scheduled_command_y_range = self.command_y_range
         self.scheduled_command_yaw_range = self.command_yaw_range
         self.scheduled_push_velocity_range = self.push_velocity_range
+        self.scheduled_command_height_range = self.command_height_range
 
         # other
         # self.decimation = self.cfg["env"]["control"]["decimation"]
@@ -157,6 +158,8 @@ class A1(VecTask):
         self.curriculum = self.cfg["env"]["terrain"]["curriculum"]
         self.add_terrain_obs = self.cfg["env"]["terrain"]["addTerrainObservation"]
         self.num_terrain_obs = self.cfg["env"]["terrain"]["numTerrainObservations"]
+
+
 
         # for key in self.rew_scales.keys():
         #     self.rew_scales[key] *= self.dt  ### wsh_annotation: TODO for what???
@@ -197,9 +200,10 @@ class A1(VecTask):
         if self.graphics_device_id != -1:
             p = self.cfg["env"]["viewer"]["pos"]
             lookat = self.cfg["env"]["viewer"]["lookat"]
-            cam_pos = gymapi.Vec3(p[0], p[1], p[2])
-            cam_target = gymapi.Vec3(lookat[0], lookat[1], lookat[2])
-            self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
+            self.set_camera(p, lookat)
+            # cam_pos = gymapi.Vec3(p[0], p[1], p[2])
+            # cam_target = gymapi.Vec3(lookat[0], lookat[1], lookat[2])
+            # self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
             # pose = gymapi.Transform()
             # pose.p = gymapi.Vec3(-1, -1, 0)
             # self.gym.attach_camera_to_body(0, 0, 0, pose, gymapi.CameraFollowMode.FOLLOW_TRANSFORM)
@@ -252,8 +256,11 @@ class A1(VecTask):
         self.noise_scale_vec = self._get_noise_scale_vec(self.cfg) ### wsh_annotation
         self.commands = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device,
                                     requires_grad=False)  # x vel, y vel, yaw vel, heading
+        self.command_lin_vel_x = torch.zeros(self.num_envs, 1, dtype=torch.float, device=self.device,
+                                    requires_grad=False)
         self.gait_commands = torch.zeros(self.num_envs, 6, dtype=torch.float, device=self.device,
                                     requires_grad=False)  # period, duty, offset2, offset3, offset4, phase
+        self.gait_commands_count = torch.zeros(self.num_envs, device=self.device, dtype=torch.long, requires_grad=False)
         self.gait_params_act = torch.zeros_like(self.gait_commands)
         self.gait_params_act_last = torch.zeros_like(self.gait_commands)
         self.gait_params_act_raw_last = torch.zeros(self.num_envs, 7, dtype=torch.float, device=self.device,
@@ -264,8 +271,13 @@ class A1(VecTask):
         self.phase_overwrite = torch.zeros_like(self.gait_commands[:, 3])
         self.phase_overwrite_last = torch.zeros_like(self.phase_overwrite)
 
+        self.ref_phase_sincos_current = torch.zeros(self.num_envs, 8, dtype=torch.float, device=self.device, requires_grad=False)
+        self.ref_phase_pi_current = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device, requires_grad=False)
+        self.ref_delta_phase = torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
+
         self.height_commands = torch.zeros(self.num_envs, 1, dtype=torch.float, device=self.device,
                                            requires_grad=False)
+        self.body_orientation_commands = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False)
         self.commands_scale = torch.tensor([self.lin_vel_scale, self.lin_vel_scale, self.ang_vel_scale],
                                            device=self.device, requires_grad=False, )
         self.xy_velocity_threshold = torch.tensor(xy_velocity_threshold_list, dtype=torch.float, device=self.device, requires_grad=False)
@@ -281,6 +293,7 @@ class A1(VecTask):
                                    requires_grad=False)
         self.last_actions = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device,
                                         requires_grad=False)
+        self.last_actions_raw = torch.zeros_like(self.actions)
         self.feet_air_time = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device, requires_grad=False)
         self.last_dof_vel = torch.zeros_like(self.dof_vel)
 
@@ -292,6 +305,8 @@ class A1(VecTask):
         # joint positions offsets
         self.default_dof_pos = torch.zeros_like(self.dof_pos, dtype=torch.float, device=self.device,
                                                 requires_grad=False)
+
+
         for i in range(len(self.dof_names)):
             name = self.dof_names[i]
             angle = self.named_default_joint_angles[name]
@@ -331,8 +346,10 @@ class A1(VecTask):
         self.controller_reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
 
         # motion planning command
-        self.motion_planning_cmd = torch.zeros(self.num_envs, 40, dtype=torch.float, device=self.device, requires_grad=False)
+        # self.motion_planning_cmd = torch.zeros(self.num_envs, 40, dtype=torch.float, device=self.device, requires_grad=False)
 
+        self.power_norm = torch.zeros(self.num_envs, 1, dtype=torch.float, device=self.device, requires_grad=False)
+        self.vx_mean = torch.zeros(self.num_envs, 1, dtype=torch.float, device=self.device, requires_grad=False)
         # accumulated square state
         # self.torques_square_accumulated = torch.zeros_like(self.torques)
         # self.base_lin_vel_error_square_accumulated = torch.zeros_like(self.base_lin_vel)
@@ -344,7 +361,7 @@ class A1(VecTask):
                                   "projectedGravity": self.projected_gravity,
                                   "dofPosition": self.dof_pos,
                                   "dofVelocity": self.dof_vel,
-                                  "lastAction": self.actions,
+                                  "lastAction": self.last_actions_raw,
                                   "commands": self.commands[:, :3],
                                   "feetContactState": self.feet_contact_state_obs,
                                   "bodyPos": self.root_states[:, :3],
@@ -357,7 +374,12 @@ class A1(VecTask):
                                   "heightCommands": self.height_commands,
                                   "feetPositionRelHip": self.feet_position_hip,
                                   "feetLinVelRelHip": self.feet_lin_vel_body,
-                                  "gaitParamsAct": self.gait_params_act}
+                                  "gaitParamsAct": self.gait_params_act,
+                                  "armature_coeffs_real": self.armature_coeffs_real,
+                                  "friction_coeffs_real": self.friction_coeffs_real,
+                                  "power_norm": self.power_norm,
+                                  "command_lin_vel_x": self.command_lin_vel_x,
+                                  "vx_mean": self.vx_mean}
 
         self.obs_combination = self.cfg["env"]["learn"]["observationConfig"]["combination"]
         for key in self.obs_combination.keys():
@@ -388,11 +410,13 @@ class A1(VecTask):
 
         self.vel_average = torch.zeros(self.num_envs, 6, dtype=torch.float, device=self.device, requires_grad=False)
 
-        self.motion_planning_interface = MotionPlanningInterface(self.num_envs, 40, self.device)
+        self.motion_planning_interface = MotionPlanningInterface(self.num_envs, 56, self.device)
         self.gait_period_offset = torch.zeros_like(self.feet_contact_state)
         self.gait_duty_cycle_offset = torch.zeros_like(self.feet_contact_state)
         self.gait_phase_offset = torch.zeros_like(self.feet_contact_state)
         self.des_feet_pos_rel_hip = torch.zeros_like(self.feet_position_body)
+        self.feet_mid_bias_xy = torch.zeros_like(self.feet_position_body[:, :8])
+        self.feet_lift_height_bias = torch.zeros_like(self.feet_mid_bias_xy)
 
         self.dof_order_act = torch.tensor([0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11], dtype=torch.int64, device=self.device,
                                           requires_grad=False)
@@ -409,14 +433,14 @@ class A1(VecTask):
         # self.motion_planning_interface = MotionPlanningInterface(self.num_envs, 28, self.device)
 
         # lower gait tracking layer
-        self.gait_tracking_policy = GaitTrackingPolicy(7, 77, [512, 256, 128])
-        self.gait_tracking_policy.to(self.device)
-        self.gait_tracking_policy.eval()
-        self.normalize_gait_tracking_input = True
-        self.restore_gait_tracking_policy("/home/wsh/Documents/pyProjects/IsaacGymEnvs/isaacgymenvs/runs/A1_2023-10-19_18-12-18(gait_transition_2)/nn/A1.pth")
+        # self.gait_tracking_policy = GaitTrackingPolicy(7, 77, [512, 256, 128])
+        # self.gait_tracking_policy.to(self.device)
+        # self.gait_tracking_policy.eval()
+        # self.normalize_gait_tracking_input = True
+        # self.restore_gait_tracking_policy("/home/wsh/Documents/pyProjects/IsaacGymEnvs/isaacgymenvs/runs/A1_2023-10-19_18-12-18(gait_transition_2)/nn/A1.pth")
 
         self.record_data = np.expand_dims(np.arange(57), axis=0)
-        self.record_data_test = np.expand_dims(np.arange(116), axis=0)
+        self.record_data_test = np.expand_dims(np.arange(116+self.num_actions), axis=0)
         self.record_path = ''
         self.time_step = time.time()
 
@@ -536,6 +560,7 @@ class A1(VecTask):
         armature_range = self.cfg["env"]["learn"]["armatureRange"]
         armature_buckets = torch_rand_float(armature_range[0], armature_range[1], (num_buckets, 1), device=self.device)
         self.armature_coeffs = armature_buckets[bucket_ids]
+        self.armature_coeffs_real[:] = self.armature_coeffs.squeeze().unsqueeze(-1)
 
         # prepare friction & restitution randomization
         friction_range = self.cfg["env"]["learn"]["frictionRange"]
@@ -544,6 +569,7 @@ class A1(VecTask):
         self.friction_coeffs = friction_buckets[bucket_ids]
         restitution_buckets = torch_rand_float(restitution_range[0], restitution_range[1], (num_buckets, 1),
                                                device=self.device)
+        self.friction_coeffs_real[:] = ((self.friction_coeffs.squeeze() + 1.) / 2.).unsqueeze(-1)
 
         # for s in range(len(rigid_shape_prop)):
         #     # rigid_shape_prop[s].friction = friction_buckets[i % num_buckets]
@@ -580,6 +606,12 @@ class A1(VecTask):
                                            device=self.device)
         if self.custom_origins:
             self.terrain_origins = torch.from_numpy(self.terrain.env_origins).to(self.device).to(torch.float)
+            self.target_points_list = torch.from_numpy(self.terrain.env_target_points).to(self.device).to(torch.float)
+            self.target_points = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False)
+            self.reached_target = torch.zeros(self.num_envs, dtype=torch.long, device=self.device, requires_grad=False)
+            self.target_pos_rel = torch.zeros(self.num_envs, 2, dtype=torch.float, device=self.device, requires_grad=False)
+            self.target_threshold = self.cfg["env"]["terrain"]["targetThreshold"]
+            self.target_yaw = torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
             spacing = 0.  ### wsh_annotation: the same origin (0., 0.) of env coordinates
 
         # prepare for env creatation
@@ -601,7 +633,7 @@ class A1(VecTask):
             ## wsh_annotation: set friction and restitution of robots
             for s in range(len(rigid_shape_prop)):
                 rigid_shape_prop[s].friction = self.friction_coeffs[i]
-                # rigid_shape_prop[s].friction = -0.6
+                rigid_shape_prop[s].friction = 1.0
             #     # rigid_shape_prop[s].restitution = restitution_buckets[i % num_buckets]
             #     rigid_shape_prop[s].friction = 1.
             #     rigid_shape_prop[s].rolling_friction = 0.
@@ -615,7 +647,7 @@ class A1(VecTask):
                 # dof_props['stiffness'][i] = self.cfg["env"]["control"]["stiffness"] #self.Kp
                 # dof_props['damping'][i] = self.cfg["env"]["control"]["damping"] #self.Kd
                 dof_props['armature'][j] = self.armature_coeffs[i]  # 0.01
-                # dof_props['armature'][j] = 0.01
+                dof_props['armature'][j] = 0.01
 
             self.gym.set_asset_rigid_shape_properties(a1_asset, rigid_shape_prop)
             a1_handle = self.gym.create_actor(env_handle, a1_asset, start_pose, "a1", i, 1, 0)
@@ -663,7 +695,7 @@ class A1(VecTask):
     #     # print(knee_contact)
 
     def check_termination(self):
-        self.timeout_buf[:] = torch.where(self.progress_buf >= self.max_episode_length - 1,
+        self.timeout_buf[:] = torch.where(self.progress_buf > self.max_episode_length - 1,
                                           torch.ones_like(self.timeout_buf), torch.zeros_like(self.timeout_buf))
         self.has_fallen = torch.norm(self.contact_forces[:, self.base_index, :], dim=1) > 1.
 
@@ -690,10 +722,12 @@ class A1(VecTask):
         # self.commands[:, 0] = 1.
         # self.commands[:, 1] = 0.0
         # self.commands[:, 2] = 0.0
-        # self.modify_vel_command()
+        self.modify_vel_command()
         # self.commands[:, 0] = 1.0
 
-        # self.modify_desired_gait_command()
+        self.modify_desired_gait_command()
+        self.calculate_ref_timing_phase()
+
         self.modify_desired_height_command()
 
         self.record_commands()
@@ -738,7 +772,7 @@ class A1(VecTask):
         # self.obs_buf_flag = (self.obs_buf==self.obs_buf1)[0]
         # print(self.obs_buf_flag)
         # print(self.obs_buf1[0, :9])
-        # print(self.obs_buf[0, :9])
+        # print(self.obs_buf[:, :])
 
     def compute_reward(self):
         # velocity tracking reward
@@ -747,16 +781,17 @@ class A1(VecTask):
         tmp_lin_vel_error = self.commands[:, :2] - self.base_lin_vel[:, :2]
         tmp_lin_vel_error = torch.where(torch.abs(tmp_lin_vel_error) < torch.abs(self.commands[:, :2]) * 0.1, torch.zeros_like(tmp_lin_vel_error), tmp_lin_vel_error)
         # tmp_lin_vel_error = torch.where(self.commands[:, :2] * tmp_lin_vel_error < 0, torch.zeros_like(tmp_lin_vel_error), tmp_lin_vel_error)
-        lin_vel_error = torch.sum(torch.square(tmp_lin_vel_error), dim=1)
+        # lin_vel_error = torch.sum(torch.square(tmp_lin_vel_error), dim=1)
         rew_lin_vel_xy = torch.exp(-lin_vel_error / 0.25) * self.rew_scales["lin_vel_xy"]
+        # rew_lin_vel_xy = torch.minimum(self.base_lin_vel[:, 0], self.commands[:, 0]) / (self.commands[:, 0] + 1e-5) * self.rew_scales["lin_vel_xy"]
         # rew_lin_vel_xy = torch.where((self.commands[:, :2] * tmp_lin_vel_error <= 0).all(dim=-1), rew_lin_vel_xy+0.5, rew_lin_vel_xy)
 
         ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
         tmp_ang_vel_error = self.commands[:, 2] - self.base_ang_vel[:, 2]
         tmp_ang_vel_error = torch.where(torch.abs(tmp_ang_vel_error) < torch.abs(self.commands[:, 2]) * 0.1, torch.zeros_like(tmp_ang_vel_error), tmp_ang_vel_error)
-        ang_vel_error = torch.square(tmp_ang_vel_error)
+        # ang_vel_error = torch.square(tmp_ang_vel_error)
         rew_ang_vel_z = torch.exp(-ang_vel_error / 0.25) * self.rew_scales["ang_vel_z"]
-        # rew_ang_vel_z = torch.exp(-torch.abs(self.euler_xyz[2]))
+        # rew_ang_vel_z = torch.exp(-torch.abs(self.target_yaw - self.euler_xyz[:, 2])) * self.rew_scales["ang_vel_z"]
 
         # other base velocity penalties
         rew_lin_vel_z = torch.square(self.base_lin_vel[:, 2]) * self.rew_scales["lin_vel_z"]
@@ -770,7 +805,7 @@ class A1(VecTask):
         rew_orient = torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1) * self.rew_scales["orient"]
 
         # base height penalty
-        rew_base_height = torch.square(self.root_states[:, 2] - self.desired_base_height) * self.rew_scales["base_height"]  # TODO(completed) add target base height to cfg
+        rew_base_height = torch.square(self.root_states[:, 2] - self.height_commands.squeeze()) * self.rew_scales["base_height"]  # TODO(completed) add target base height to cfg
         # base_height_error = torch.square((self.root_states[:, 2] - self.desired_base_height) * 1000)
         # rew_base_height = (1. - torch.exp(-base_height_error / 10.)) * self.rew_scales["base_height"]
         # print(self.root_states[0, 2])
@@ -800,8 +835,10 @@ class A1(VecTask):
                                 4 *torch.abs(self.contact_forces[:, self.feet_indices, 2]), dim=1).float() * self.rew_scales["stumble"]
 
         # action rate penalty TODO action is uncertain
-        # rew_action_rate = torch.norm(self.last_actions - self.actions, dim=1) * self.rew_scales["action_rate"]
-        rew_action_rate = torch.norm(self.last_actions[:, :5] - self.actions[:, :5], dim=1) * self.rew_scales["action_rate"]
+        rew_action_rate = torch.norm(self.last_actions - self.actions, dim=1) * self.rew_scales["action_rate"]
+        # rew_action_rate = torch.norm(self.last_actions[:, :12] - self.actions[:, :12], dim=1) * self.rew_scales["action_rate"]
+        # rew_action_rate += torch.norm(self.last_actions[:, 12:] - self.actions[:, 12:], dim=1) * (-1.0e-3)*self.dt
+        # print(f"rew_action_rate: {rew_action_rate[0]}")
 
         # gait
         # rew_gait_tracking = torch.exp(-torch.norm(self.gait_commands[:, :5] - self.gait_params_act[:, :5], dim=1) / 0.25) * self.rew_scales["gait_tracking"]
@@ -817,6 +854,11 @@ class A1(VecTask):
         rew_gait_phase_timing = torch.where(gait_trans < 0.1, torch.exp(-torch.square((gait_phase_timing - self.dt) / self.dt)), torch.zeros_like(gait_trans))
         rew_gait_phase_timing *= self.rew_scales["gait_phase_timing"]
         rew_gait_phase_shape = (1 - torch.exp(-10 * torch.abs(torch.norm(self.actions[:, 5:7], dim=1) - 1))) * self.rew_scales["gait_phase_shape"]
+
+        # rew_gait_phase_timing = (2.0 - torch.norm(self.ref_phase_sincos_current[:, :2] - self.actions, dim=1)) * self.rew_scales["gait_phase_timing"]
+        # phase_error = self.calculate_phase(self.ref_phase_sincos_current[:, 0], self.ref_phase_sincos_current[:, 1]) - \
+        #               self.calculate_phase(self.actions[:, 0], self.actions[:, 1])
+        # rew_gait_phase_timing += (1.0 - torch.abs(phase_error)) * self.rew_scales["gait_phase_timing"]
 
         # gait_phase_trans = self.phase_overwrite - self.phase_overwrite_last
         # gait_phase_trans = torch.where(gait_phase_trans < 0, gait_phase_trans + 1, gait_phase_trans)
@@ -835,15 +877,6 @@ class A1(VecTask):
         rew_air_time[:] *= ~((self.commands[:, :3].abs() < self.xy_velocity_threshold).all(dim=-1))
         self.feet_air_time *= (~(self.feet_contact_state > 0.5)).to(torch.int)
 
-        # energy efficiency penalty
-        energy = self.torques * self.dof_vel
-        # energy += 0.3 * torch.square(self.torques)
-        energy = torch.clip(energy, min=0., max=None)
-        energy = torch.sum(energy, dim=1)
-        tmp_lin_v = torch.norm(self.base_lin_vel, dim=1)
-        energy_cot = torch.where(tmp_lin_v > 0, energy / (12.776 * 9.8 * tmp_lin_v), energy / 4.0)
-        rew_energy = (1. - torch.exp(-energy_cot / 0.25)) * self.rew_scales["energy"]
-
         # cosmetic penalty for hip motion
         rew_hip = torch.sum(torch.abs(self.dof_pos[:, [0, 3, 6, 9]] - self.default_dof_pos[:, [0, 3, 6, 9]]), dim=1) * \
                   self.rew_scales["hip"]
@@ -855,14 +888,14 @@ class A1(VecTask):
         # rew_survival = 20.0 * self.commands[0, 0]
         rew_survival = 0.0 * self.dt
 
-        buf_length = 10
+        buf_length = 15
         body_height_buf = self.obs_buffer_dict["bodyPos"].get_len_data_raw(buf_length)[:, 2, :]
         lin_vel_buf = self.obs_buffer_dict["linearVelocity"].get_len_data_raw(buf_length)
         ang_vel_buf = self.obs_buffer_dict["angularVelocity"].get_len_data_raw(buf_length)
         projectedGravity_buf = self.obs_buffer_dict["projectedGravity"].get_len_data_raw(buf_length)
         motor_vel_buf = self.obs_buffer_dict["dofVelocity"].get_len_data_raw(buf_length)
         motor_torque_buf = self.obs_buffer_dict["motorTorque"].get_len_data_raw(buf_length)
-        motor_torque_buf2 = self.obs_buffer_dict["motorTorque"].get_len_data_raw(500)
+        motor_torque_buf2 = self.obs_buffer_dict["motorTorque"].get_len_data_raw(buf_length)
         feet_force_buf = self.obs_buffer_dict["feetForce"].get_len_data_raw(buf_length)
         v_x_buf = lin_vel_buf[:, 0, :]
         v_y_buf = lin_vel_buf[:, 1, :]
@@ -875,6 +908,7 @@ class A1(VecTask):
         power_mech_buf = motor_torque_buf * motor_vel_buf
         power_heat_buf = 0.26 * motor_torque_buf * motor_torque_buf
         power = power_mech_buf + power_heat_buf
+        # power = power_mech_buf
         power = torch.clip(power, min=0., max=None)
         feet_resultant_force_buf = torch.norm(feet_force_buf.view(self.num_envs, 4, 3, -1), dim=2)
         # feet_resultant_force_buf = feet_force_buf.view(self.num_envs, 4, 3, -1)[:, :, 2, :]
@@ -901,12 +935,19 @@ class A1(VecTask):
         tmp_vel_mean = torch.stack([v_x_mean, v_y_mean, v_z_mean, v_roll_mean, v_pitch_mean, v_yaw_mean], dim=1)
         self.vel_average[:] = tmp_vel_mean * 1. + self.vel_average * 0.
         # print(f"vx_average: {self.vel_average[:, 0]}")
+        self.vx_mean[:] = v_x_mean.unsqueeze(-1)
 
 
         # print(f"v_x_mean: {v_x_mean}")
         # print(f"v_y_mean: {v_y_mean}")
         # print(f"v_yaw_mean: {v_yaw_mean}")
         # print(self.obs_buffer_dict["linearVelocity"].get_latest_data_raw()[0][0])
+
+        # energy efficiency penalty
+        energy_cot = torch.where(v_x_mean != 0, power_mean_total / (12.776 * 9.8 * torch.abs(v_x_mean)), power_mean_total / 40.0)
+        rew_energy = torch.exp(-torch.square(energy_cot) * 0.25) * self.rew_scales["energy"]
+        self.power_norm[:] = energy_cot.unsqueeze(-1)
+        # print(f"rew_energy: {rew_energy[0]}")
 
         # rew_base_height = torch.square(body_height_mean - self.desired_base_height) * self.rew_scales["base_height"]
 
@@ -917,6 +958,9 @@ class A1(VecTask):
         # rew_ang_vel_z = torch.exp(-ang_vel_error / 0.25) * self.rew_scales["ang_vel_z"]
         # rew_ang_vel_z = -ang_vel_error * self.rew_scales["ang_vel_z"]
         rew_power = power_mean_total * self.rew_scales["power"]
+        # power_mean_total = torch.clip(power_mean_total, min=0., max=900.)
+        # rew_power = torch.where(torch.abs(tmp_lin_vel_error[:, 0]) < 0.1, 900.0 - power_mean_total, torch.zeros_like(power_mean_total)) * self.rew_scales["power"]
+        # print(power_mean_total)
 
         rew_power_max = power_max_mean_each * self.rew_scales["power_max_mean_each"]
         rew_power_max_std = power_max_mean_std * self.rew_scales["power_max_mean_std"]
@@ -935,9 +979,10 @@ class A1(VecTask):
                           rew_torques + rew_joint_acc + rew_knee_collision + rew_action_rate + rew_air_time + rew_hip + rew_stumble + rew_energy + rew_power + rew_survival + \
                           rew_power_max + rew_power_max_std + rew_feet_force_max + rew_feet_force_max_std + rew_torque_max + rew_torque_max_std + rew_fallen_over + rew_delta_torques + rew_dof_bias + \
                           rew_gait_tracking + rew_gait_trans_rate + rew_gait_phase_timing + rew_gait_phase_shape
-
+        # self.rew_buf[:] = rew_orient
         # self.rew_buf[:] = rew_lin_vel_xy + rew_ang_vel_z + rew_energy + rew_survival
         # print(self.rew_buf)
+        # print(f"torques: {rew_torques}")
         # print(f"energy: {rew_energy}")
         # print(f"euler: {self.euler_xyz}")
 
@@ -1017,11 +1062,11 @@ class A1(VecTask):
                                                      (len(env_ids), 1), device=self.device).squeeze()
         self.commands[env_ids, 1] = torch_rand_float(self.command_y_range[0], self.command_y_range[1],
                                                      (len(env_ids), 1), device=self.device).squeeze()
-        self.commands[env_ids, 3] = torch_rand_float(self.command_yaw_range[0], self.command_yaw_range[1],
-                                                     (len(env_ids), 1), device=self.device).squeeze()
+        # self.commands[env_ids, 3] = torch_rand_float(self.command_yaw_range[0], self.command_yaw_range[1],
+        #                                              (len(env_ids), 1), device=self.device).squeeze()
         # self.commands[env_ids, 2] = self.commands[env_ids, 3]
         # self.commands[env_ids, 1] = 0.
-        self.commands[env_ids, 2] = 0.
+        # self.commands[env_ids, 2] = 0.
         # self.commands[env_ids, 0] = 1.0
         # self.commands[env_ids] *= (torch.norm(self.commands[env_ids, :2], dim=1) > self.xy_velocity_threshold).unsqueeze(1)  # set small commands to zero. wsh_annotation: TODO 0.25 ?
         # self.modify_vel_command()
@@ -1066,13 +1111,17 @@ class A1(VecTask):
         self.last_base_lin_vel_rel_world[env_ids] = self.root_states[env_ids, 7:10].clone().detach()
 
         self.actions[env_ids] = 0.0
+        self.last_actions_raw[env_ids] = 0.0
         self.last_actions[env_ids] = 0.0
         self.last_torques[env_ids] = 0.
         self.feet_contact_state[env_ids] = 0
         self.feet_contact_state_obs[env_ids] = -0.5
         self.feet_force[env_ids] = self.contact_forces[env_ids][:, self.feet_indices].reshape(len(env_ids), -1)
+        self.feet_force[env_ids] = 0.0
 
         self.controller_reset_buf[env_ids] = 1
+
+        self.height_commands[env_ids] = 0.3
 
         # self.gait_period_offset[env_ids] = (torch.zeros_like(self.feet_contact_state) + torch_rand_float(-0.23, 0.1, (self.num_envs, 1), device=self.device))[env_ids]
         # self.gait_period_offset[env_ids] = -0.2
@@ -1102,6 +1151,9 @@ class A1(VecTask):
                 self.obs_buffer_dict[key].reset_and_fill_index(env_ids, self.obs_name_to_value[key][env_ids])
 
         self.vel_average[env_ids] = 0.0
+        self.power_norm[env_ids] = 0.0
+        self.vx_mean[env_ids] = 0.0
+        self.command_lin_vel_x[env_ids] = 0.0
 
         # fill extras
         self.extras["episode"] = {}
@@ -1118,6 +1170,7 @@ class A1(VecTask):
         self.commands_change_random_count[env_ids] = torch.randint(*self.commands_change_interval, (len(env_ids),), device=self.device, dtype=torch.long)
         self.gait_commands_change_random_count[env_ids] = torch.randint(*self.gait_commands_change_interval, (len(env_ids),), device=self.device, dtype=torch.long)
         self.height_commands_change_random_count[env_ids] = torch.randint(*self.height_commands_change_interval, (len(env_ids),), device=self.device, dtype=torch.long)
+        self.gait_commands_count[env_ids] = 0
 
         self.compute_observations()
         self.gait_params_act_last[env_ids] = torch.zeros_like(self.gait_params_act_last[env_ids])
@@ -1125,18 +1178,44 @@ class A1(VecTask):
         self.phase_overwrite_last[env_ids] = 0.0
         self.gait_period_tracking_error_last[env_ids] = 0.0
 
-
     def update_terrain_level(self, env_ids):
         if not self.init_done or not self.curriculum:
             # don't change on initial reset
             return
         distance = torch.norm(self.root_states[env_ids, :2] - self.env_origins[env_ids, :2], dim=1)
         ### wsh_annotation: TODO 卡BUG loop in last and current level ??
-        self.terrain_levels[env_ids] -= 1 * (distance < torch.norm(
-            self.commands[env_ids, :2]) * self.max_episode_length_s * 0.25)  ### wsh_annotation: TODO 0.25 ?
-        self.terrain_levels[env_ids] += 1 * (distance > self.terrain.env_length / 2)
+        # self.terrain_levels[env_ids] -= 1 * (distance < torch.norm(
+        #     self.commands[env_ids, :2]) * self.max_episode_length_s * 0.25)  ### wsh_annotation: TODO 0.25 ?
+        # self.terrain_levels[env_ids] += 1 * (distance > self.terrain.env_length / 2)
+        self.terrain_levels[env_ids] -= 1 * ((self.reached_target[env_ids] < 0.1) & (distance < torch.norm(self.commands[env_ids, :2]) * self.max_episode_length_s * 0.25))
+        self.terrain_levels[env_ids] += 1 * self.reached_target[env_ids]
+        # self.terrain_levels[env_ids] = 9
+
         self.terrain_levels[env_ids] = torch.clip(self.terrain_levels[env_ids], 0) % self.terrain.env_rows
         self.env_origins[env_ids] = self.terrain_origins[self.terrain_levels[env_ids], self.terrain_types[env_ids]]
+
+        self.update_target_points(env_ids)
+        self.reached_target[env_ids] = 0
+        self.check_target_reached()
+
+    def check_target_reached(self):
+        self.target_pos_rel[:] = self.target_points[:, :2] - self.root_states[:, :2]
+        reach_target = torch.norm(self.target_pos_rel, dim=1) < self.target_threshold
+        self.reached_target[:] |= reach_target
+        reach_target_ids = reach_target.nonzero(as_tuple=False).flatten()
+        self.update_target_points(reach_target_ids)
+
+        norm = torch.norm(self.target_pos_rel, dim=-1, keepdim=True)
+        target_vec_norm = self.target_pos_rel / (norm + 1e-5)
+        self.target_yaw[:] = torch.atan2(target_vec_norm[:, 1], target_vec_norm[:, 0])
+        self.commands[:, 3] = self.target_yaw.clone()
+
+    def update_target_points(self, env_ids):
+        num = len(env_ids)
+        if num > 0:
+            indices = torch.randint(0, 8, (num,))
+            self.target_points[env_ids] = self.target_points_list[self.terrain_levels[env_ids], self.terrain_types[env_ids], indices]
+            self.target_pos_rel[env_ids] = self.target_points[env_ids, :2] - self.root_states[env_ids, :2]
 
     def push_robots(self):
         # wsh_annotation: TODO(!!!) How about add external forces ??
@@ -1149,7 +1228,7 @@ class A1(VecTask):
         env_ids = (self.progress_buf % self.push_random_count == 0).nonzero(as_tuple=False).flatten()
         env_ids_int32 = env_ids.to(dtype=torch.int32)
         self.root_states[env_ids, 7:9] = torch_rand_float(self.scheduled_push_velocity_range[0], self.scheduled_push_velocity_range[1], (len(env_ids), 2), device=self.device)  # lin vel x/y
-        # self.root_states[env_ids, 7:9] = torch.tensor([2., 0], device=self.device)
+        # self.root_states[env_ids, 7:9] = torch.tensor([0., 1.0], device=self.device)
         self.gym.set_actor_root_state_tensor_indexed(self.sim,
                                                      gymtorch.unwrap_tensor(self.root_states),
                                                      gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
@@ -1160,9 +1239,18 @@ class A1(VecTask):
     def pre_physics_step(self, actions):
         # t = time.time()
 
-        self.actions[:] = actions.clone().to(self.device) * self.action_scale
+        self.actions[:] = actions.clone().to(self.device)
+        # print(f"action_raw_0: {self.actions[0]}")
+        self.last_actions_raw[:] = self.actions.clone()
+        self.actions[:] = torch.clamp(actions, -self.clip_actions, self.clip_actions)
+        self.actions[:] *= self.action_scale
 
-        # ------------------------------------------- action to gait -------------------------------------------
+        dof_pos_desired = self.default_dof_pos
+        joint_vel_des = 0.
+        tau_ff = 0.
+
+
+        # ------------------------------------------ action to gait modulate ------------------------------------------
         # self.gait_period_act = (self.actions[:, 0].unsqueeze(-1) + 1.0) * 0.5  # [0, 1]
         # duty = (self.actions[:, 1].unsqueeze(-1) + 1.0) * 0.5
         # gait_period_offset = (self.gait_period_act - 0.5).repeat(1, 4)
@@ -1173,39 +1261,86 @@ class A1(VecTask):
         # self.gait_params_act[:] = torch.cat([self.gait_period_act, duty, gait_phase_offset.clone()], dim=-1)
         # ----------------------------------------------------------------------------------------------------
 
-        self.gait_commands[:, :5] = (self.actions[:, :5] + 1.0) * 0.5  # [0, 1]
-        self.gait_commands[:, 5] = 0.
-        gait_tracked = self.gait_tracking(self.gait_commands, self.gait_params_act_raw_last, self.obs_buf.clone().detach()) * 0.25
-        self.gait_period_act = (gait_tracked[:, 0].unsqueeze(-1) + 1.0) * 0.5  # [0, 1]
-        duty = (gait_tracked[:, 1].unsqueeze(-1) + 1.0) * 0.5
-        gait_period_offset = (self.gait_period_act - 0.5).repeat(1, 4)
-        gait_duty_cycle_offset = (duty - 0.5).repeat(1, 4)
-        gait_phase_offset = torch.zeros_like(gait_tracked[:, 2:6])
-        gait_phase_offset[:, :3] = (gait_tracked[:, 2:5] + 1.0) * 0.5  # [0, 1]
-        gait_phase_offset[:, 3] = self.calculate_phase(gait_tracked[:, 5], gait_tracked[:, 6])
-        self.gait_params_act[:] = torch.cat([self.gait_period_act, duty, gait_phase_offset.clone()], dim=-1)
-        self.gait_params_act_raw_last = gait_tracked.clone()
+        # ------------------------------------------ action to gait type ------------------------------------------
+        # self.gait_commands[:, :2] = self.actions[:, :2] * 0.25 + 0.45  # [0.2, 0.7]
+        # self.gait_commands[:, 2:5] = (self.actions[:, 2:5] + 1.0) * 0.5  # [0, 1]
+        # self.gait_commands[:, 5] = 0.
+        # self.gait_periods[:] = self.gait_commands[:, 0]
+        # gait_tracked = self.gait_tracking()
+        # self.gait_period_act = gait_tracked[:, 0].unsqueeze(-1)
+        # duty = gait_tracked[:, 1].unsqueeze(-1)
+        # gait_period_offset = (self.gait_period_act - 0.5).repeat(1, 4)
+        # gait_duty_cycle_offset = (duty - 0.5).repeat(1, 4)
+        # gait_phase_offset = torch.zeros_like(gait_tracked[:, :4])
+        # gait_phase_offset[:, :3] = gait_tracked[:, 2:5].clone()
+        # gait_phase_offset[:, 3] = self.calculate_phase(gait_tracked[:, 5], gait_tracked[:, 6])
+        # self.gait_params_act[:] = torch.cat([self.gait_period_act, duty, gait_phase_offset.clone()], dim=-1)
+        # print(self.gait_params_act[0])
+
+        # ------------------------------------------ action to trajectory ------------------------------------------
+        # vel_commands = self.commands[:, :3].clone()
+        # vel_commands[:, 0] += self.actions[:, 0].clone()  # vel_x offset
+        # vel_commands[:, 2] += self.actions[:, 1].clone() * 2.0  # omega offset
+        # self.body_orientation_commands[:, 0] = self.actions[:, 0].clone() * 0.2  # [-0.4, 0.4]
+        # self.body_orientation_commands[:, 1] = self.actions[:, 1].clone() * 0.6  # [-0.8, 0.8]
+        # self.feet_mid_bias_xy[:, 0:2] = self.actions[:, 2].unsqueeze(-1).repeat(1, 2) * 0.1  # [-0.1, 0.1]
+        # self.feet_mid_bias_xy[:, 2:4] = self.actions[:, 3].unsqueeze(-1).repeat(1, 2) * 0.1
+        # self.feet_mid_bias_xy[:, [4, 6]] = self.actions[:, 4].unsqueeze(-1).repeat(1, 2) * 0.1  # [-0.1, 0.1]
+        # self.feet_mid_bias_xy[:, [5, 7]] = self.actions[:, 5].unsqueeze(-1).repeat(1, 2) * 0.1
+        # self.feet_lift_height_bias[:, :4] = torch.exp(self.actions[:, 6:10].clone()) * 0.1 - 0.05  # [-0.15, 0.15]
+        # self.feet_lift_height_bias[:, 4:8] = self.actions[:, 10:14].clone() * 0.4  # [-0.4, 0.4]
+        # self.des_feet_pos_rel_hip[:] = self.actions[:, 18:30].clone() * 0.15  # [-0.15, 0.15]
+
+        # self.feet_lift_height_bias[:, :4] = self.actions[:, 0:4].clone() * 0.1  # [-0.15, 0.15]
+        # self.feet_lift_height_bias[:, 4:8] = self.actions[:, 4:8].clone() * 0.4  # [-0.4, 0.4]
+        # self.des_feet_pos_rel_hip[:] = self.actions.clone()  # [-0.15, 0.15]
+
+        # print(self.feet_mid_bias_xy[0])
+        # print(self.feet_lift_height_bias[0])
 
 
         # ------------------------------------------- follow gait commands -------------------------------------------
-        # gait_period_offset = (self.gait_periods - 0.5).unsqueeze(-1)
-        # gait_duty_cycle_offset = (self.gait_commands[:, 1] - 0.5).unsqueeze(-1)
-        # gait_phase_offset = self.gait_commands[:, 2:6].clone()
+        gait_period_offset = (self.gait_periods - 0.5).unsqueeze(-1)
+        gait_duty_cycle_offset = (self.gait_commands[:, 1] - 0.5).unsqueeze(-1)
+        gait_phase_offset = self.gait_commands[:, 2:6].clone()
+        gait_phase_offset[:, 3] = self.calculate_phase(self.ref_phase_sincos_current[:, 0], self.ref_phase_sincos_current[:, 1])
+        # gait_phase_offset[:, 3] = self.calculate_phase(self.actions[:, 0],
+        #                                                self.actions[:, 1])
         # ------------------------------------------------------------------------------------------------------------
 
 
         # ------------------------------------------- motion planning interface --------------------------------------
         body_height_offset = self.height_commands - 0.3
-        body_orientation = torch.zeros_like(self.base_ang_vel)
-        gait_phase_offset[:, :2] -= 0.5
+        gait_phase_offset[:, :2] = gait_phase_offset[:, :2].clone() - 0.5
         # print(self.gait_params_act[0])
+        # test motion_planning commands
+        # self.body_orientation_commands[:, :] = torch.tensor([0.1, 0.3, 0.003], device=self.device)
+        # self.feet_mid_bias_xy[:, :] = torch.tensor([-0., 0.004, 0.007, 0.006, 0.1, -0.1, 0.011, 0.010], device=self.device)
+        # self.feet_lift_height_bias[:, :] = torch.tensor([-0.03, 0.02, 0.07, 0.1, 0.017, 0.016, 0.019, 0.018], device=self.device)
+        # self.des_feet_pos_rel_hip[:, :] = torch.tensor([0.023, 0.15, 0.025, 0.020, 0.021, 0.022, 0.029, 0.030, 0.031, 0.026, 0.027, 0.028], device=self.device)
+
+        # swing_time = self.actions[:, 0] * 0.1 + 0.2
+        # stance_time = self.actions[:, 1] * 0.14 + 0.22
+        # self.gait_period_act[:] = swing_time + stance_time
+        # duty = stance_time / self.gait_period_act
+        # self.gait_period_act = 1.0 / (self.actions[:, 0].unsqueeze(-1) + 3.0)  # [2, 4] Hz
+        # duty = self.actions[:, 1].unsqueeze(-1) * 0.2 + 0.5  # [0.3, 0.7]
+        # gait_period_offset = (self.gait_period_act.unsqueeze(-1) - 0.5).repeat(1, 4)
+        # gait_duty_cycle_offset = (duty.unsqueeze(-1) - 0.5).repeat(1, 4)
+        # gait_phase_offset = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device, requires_grad=False)
+        # body_height_offset = torch.zeros(self.num_envs, 1, dtype=torch.float, device=self.device, requires_grad=False)
+        # print(f"period: {self.gait_period_act}")
+        # print(f"duty: {duty}")
+        # print(f"vx_mean: {self.vx_mean}")
         self.motion_planning_interface.update_gait_planning(True, gait_period_offset, gait_duty_cycle_offset, gait_phase_offset, None)
-        self.motion_planning_interface.update_body_planning(True, body_height_offset, body_orientation, None, None, self.commands[:, :3])
+        self.motion_planning_interface.update_body_planning(True, body_height_offset, self.body_orientation_commands, None, None, self.commands[:, :3])
+        self.motion_planning_interface.update_feet_mid_bias_xy(self.feet_mid_bias_xy)
+        self.motion_planning_interface.update_feet_lift_height(self.feet_lift_height_bias)
         self.motion_planning_interface.update_des_feet_pos_rel_hip(self.des_feet_pos_rel_hip)
         self.motion_planning_interface.generate_motion_command()
         # ------------------------------------------------------------------------------------------------------------
 
-        # dof_pos_desired = self.actions + self.default_dof_pos
+        # dof_pos_desired = self.default_dof_pos
 
         kp = torch.zeros_like(self.dof_pos[0])
         kd = torch.zeros_like(self.dof_pos[0])
@@ -1219,9 +1354,13 @@ class A1(VecTask):
         k = -3.953886
 
         for i in range(self.decimation - 1):
-            torques, tau_ff, q_des, qd_des = self.mit_controller.step_run(self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state, self.motion_planning_interface.get_motion_command())  # self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state
+            torques, tau_ff_mpc, q_des, qd_des = self.mit_controller.step_run(self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state, self.motion_planning_interface.get_motion_command())  # self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state
             self.motion_planning_interface.change_gait_planning(False)
             self.motion_planning_interface.change_body_planning(False)
+
+            tau_ff = tau_ff_mpc
+            dof_pos_desired = q_des
+            joint_vel_des = qd_des
 
             # torques1 = torch.clip(tau_ff + kp * (q_des + dof_pos_comp - self.dof_pos) + kd * (qd_des - self.dof_vel), -tau_max, tau_max)
             # print(f"kp: {kp}")
@@ -1231,17 +1370,17 @@ class A1(VecTask):
             # print(f"torques1: {torques1[0]}")
             # print(f"tau_ff: {tau_ff[0]}")
 
-            # torques = torch.clip(self.Kp * (dof_pos_desired - self.dof_pos) - self.Kd * self.dof_vel, -tau_max, tau_max)
-            # tmp_max_torque = torch.clip(k * (self.dof_vel - v_max), 0, tau_max)
-            # tmp_min_torque = torch.clip(k * (self.dof_vel + v_max), -tau_max, 0)
-            # torques[:] = torch.where(self.dof_vel > tau_max / k + v_max, torch.clip(torques, -tau_max * torch.ones_like(torques), tmp_max_torque), torques)
-            # torques[:] = torch.where(self.dof_vel < -(tau_max / k + v_max), torch.clip(torques, tmp_min_torque, tau_max * torch.ones_like(torques)), torques)
+            torques = torch.clip(tau_ff + self.Kp * (dof_pos_desired - self.dof_pos) + self.Kd * (joint_vel_des - self.dof_vel), -tau_max, tau_max)
+            tmp_max_torque = torch.clip(k * (self.dof_vel - v_max), 0, tau_max)
+            tmp_min_torque = torch.clip(k * (self.dof_vel + v_max), -tau_max, 0)
+            torques[:] = torch.where(self.dof_vel > tau_max / k + v_max, torch.clip(torques, -tau_max * torch.ones_like(torques), tmp_max_torque), torques)
+            torques[:] = torch.where(self.dof_vel < -(tau_max / k + v_max), torch.clip(torques, tmp_min_torque, tau_max * torch.ones_like(torques)), torques)
             # print("torques: ", torques)
             # torques = torch.zeros_like(torques)
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
             self.torques[:] = torques.view(self.torques.shape)
             # self.torques = torques.view(self.torques.shape)
-            # if i % 10 == 0 and self.force_render:
+            # if i % 15 == 0 and self.force_render:
             #     self.render()
             self.gym.simulate(self.sim)
             if self.device == 'cpu':
@@ -1255,7 +1394,11 @@ class A1(VecTask):
 
             # self.torques_square_accumulated += torch.square(torques)
 
-        torques, tau_ff, q_des, qd_des = self.mit_controller.step_run(self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state, self.motion_planning_interface.get_motion_command())
+        torques, tau_ff_mpc, q_des, qd_des = self.mit_controller.step_run(self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state, self.motion_planning_interface.get_motion_command())
+
+        tau_ff = tau_ff_mpc
+        dof_pos_desired = q_des
+        joint_vel_des = qd_des
 
         # torques1 = torch.clip(tau_ff + kp * (q_des + dof_pos_comp - self.dof_pos) + kd * (qd_des - self.dof_vel), -tau_max, tau_max)
 
@@ -1264,13 +1407,13 @@ class A1(VecTask):
         # print(f"torques1: {torques1[0]}")
         # print(f"tau_ff: {tau_ff[0]}")
 
-        # torques = torch.clip(self.Kp * (dof_pos_desired - self.dof_pos) - self.Kd * self.dof_vel, -tau_max, tau_max)
-        # tmp_max_torque = torch.clip(k * (self.dof_vel - v_max), 0, tau_max)
-        # tmp_min_torque = torch.clip(k * (self.dof_vel + v_max), -tau_max, 0)
-        # torques[:] = torch.where(self.dof_vel > tau_max / k + v_max,
-        #                          torch.clip(torques, -tau_max * torch.ones_like(torques), tmp_max_torque), torques)
-        # torques[:] = torch.where(self.dof_vel < -(tau_max / k + v_max),
-        #                          torch.clip(torques, tmp_min_torque, tau_max * torch.ones_like(torques)), torques)
+        torques = torch.clip(tau_ff + self.Kp * (dof_pos_desired - self.dof_pos) + self.Kd * (joint_vel_des - self.dof_vel), -tau_max, tau_max)
+        tmp_max_torque = torch.clip(k * (self.dof_vel - v_max), 0, tau_max)
+        tmp_min_torque = torch.clip(k * (self.dof_vel + v_max), -tau_max, 0)
+        torques[:] = torch.where(self.dof_vel > tau_max / k + v_max,
+                                 torch.clip(torques, -tau_max * torch.ones_like(torques), tmp_max_torque), torques)
+        torques[:] = torch.where(self.dof_vel < -(tau_max / k + v_max),
+                                 torch.clip(torques, tmp_min_torque, tau_max * torch.ones_like(torques)), torques)
         # print("torques: ", torques)
         # torques = torch.zeros_like(torques)
         self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
@@ -1289,6 +1432,7 @@ class A1(VecTask):
         self.progress_buf += 1
         self.randomize_buf += 1
         self.common_step_counter += 1
+        self.gait_commands_count += 1
         self.schedule_random()
         # if self.push_flag and self.common_step_counter % self.push_interval == 0:  ### wsh_annotation: self.push_interval > 0
         #     self.push_robots()
@@ -1315,8 +1459,12 @@ class A1(VecTask):
         #     print(self.euler_xyz)
         #     time.sleep(100)
 
+        # check target reach
+        if self.custom_origins:
+            self.check_target_reached()
+
         # modify vel command
-        self.modify_vel_command()
+        # self.modify_vel_command()
         self.compute_observations()
 
         if self.push_flag:  ### wsh_annotation: self.push_interval > 0
@@ -1338,6 +1486,7 @@ class A1(VecTask):
             self.gym.clear_lines(self.viewer)
             self.gym.refresh_rigid_body_state_tensor(self.sim)
             sphere_geom = gymutil.WireframeSphereGeometry(0.02, 4, 4, None, color=(1, 1, 0))
+            sphere_geom_target = gymutil.WireframeSphereGeometry(0.1, 32, 32, None, color=(0, 0, 1))
 
             if not self.add_terrain_obs:
                 self.measured_heights = self.get_heights()
@@ -1353,6 +1502,14 @@ class A1(VecTask):
                     z = heights[j]
                     sphere_pose = gymapi.Transform(gymapi.Vec3(x, y, z), r=None)
                     gymutil.draw_lines(sphere_geom, self.gym, self.viewer, self.envs[i], sphere_pose)
+
+                # draw target
+                target_point = self.target_points[i]
+                target_point_xy = target_point[:2] + self.terrain.border_size
+                pts = (target_point_xy / self.terrain.horizontal_scale).long()
+                target_point_z = self.height_samples[pts[0], pts[1]].cpu().item() * self.terrain.vertical_scale
+                pose = gymapi.Transform(gymapi.Vec3(target_point[0], target_point[1], target_point_z), r=None)
+                gymutil.draw_lines(sphere_geom_target, self.gym, self.viewer, self.envs[i], pose)
 
     def init_height_points(self):
         # 1mx1.6m rectangle (without center line)
@@ -1438,10 +1595,10 @@ class A1(VecTask):
 
     def record_state_test(self):
         if self.common_step_counter == 0 and self.record_path == '':
-            record_dir = os.path.join('/home/wsh/Documents/pyProjects/IsaacGymEnvs/isaacgymenvs/runs', 'A1_2023-10-12_18-01-31/record_test_data')
+            record_dir = os.path.join('/home/wsh/Documents/pyProjects/IsaacGymEnvs/isaacgymenvs/runs', 'A1_2023-10-23_04-43-08(low_power_7_mpc)/record_test_data')
             os.makedirs(record_dir, exist_ok=True)
             # file_name = generate_filename('record_data_v-0_3_0')
-            file_name = 'record_data-A1_2023-10-12_18-01-31_v05_amu001.csv'
+            file_name = 'record_data-A1_2023-10-23_04-43-08(low_power_7_mpc)_v03_amu001_mpc_trot-05-075-05-05-00.csv'
             self.record_path = os.path.join(record_dir, file_name)
             with open(self.record_path, 'a+') as fp:
                 fp.write("[0:3]:     body position(m)" + '\n')
@@ -1457,7 +1614,8 @@ class A1(VecTask):
                 fp.write("[85:97]:   feet contact force(N)" + '\n')
                 fp.write("[97:101]:  feet contact state(1->contact)" + '\n')
                 fp.write("[101:104]: velocity command(vx, vy, omega)" + '\n')
-                fp.write("[104:116]: torque command(Nm)" + '\n\n')
+                fp.write("[104:116]: torque command(Nm)" + '\n')
+                fp.write("number of actions: " + str(self.num_actions) + '\n\n')
 
         data = torch.cat((self.root_states[:, :3],
                           self.base_quat,
@@ -1472,10 +1630,11 @@ class A1(VecTask):
                           self.feet_force,
                           self.feet_contact_state,
                           self.commands[:, :3],
-                          self.torques), dim=-1).cpu().numpy()
+                          self.torques,
+                          self.last_actions_raw), dim=-1).cpu().numpy()
         self.record_data_test = np.concatenate((self.record_data_test, data), axis=0)
 
-        if self.common_step_counter >= 1000 - 1:
+        if self.common_step_counter >= 1000:
             with open(self.record_path, 'a+') as fp:
                 np.savetxt(fp, self.record_data_test, delimiter=",")
             sys.exit()
@@ -1541,10 +1700,12 @@ class A1(VecTask):
                                                      (len(env_ids), 1), device=self.device).squeeze()
         self.commands[env_ids, 3] = torch_rand_float(self.scheduled_command_yaw_range[0], self.scheduled_command_yaw_range[1],
                                                      (len(env_ids), 1), device=self.device).squeeze()
+        # self.commands[env_ids, 2] = self.commands[env_ids, 3].clone()
+        self.commands[:, 0] = 1.6
 
-        # self.commands[:, 0] = 1.8
-        self.commands[:, 1] = 0.0
-        self.commands[:, 3] = 0.0
+
+        self.commands[:, 1] = -1.0
+        self.commands[:, 3] = 3.14
         # if self.common_step_counter % 120 > 60:
         #     self.commands[:, 3] = 3
         # else:
@@ -1554,14 +1715,34 @@ class A1(VecTask):
         forward = quat_apply(self.base_quat, self.forward_vec)
         heading = torch.atan2(forward[:, 1], forward[:, 0])
         self.commands[:, 2] = self._heading_to_omega(heading)
+        # self.commands[:, 2] = 0.
+        # print(f"heading_vec: {forward[0]}")
+        # print(f"heading: {heading[0]}")
+        # print(f"target_vec: {self.target_pos_rel[0]}")
+        # print(f"target_yaw: {self.target_yaw[0]}")
+        # print(f"omega: {self.commands[0, 2]}")
+        # print("------------------------------------------------")
 
-        # self.commands[:, 2] = 9.
+
+        # self.commands[:, 2] = 0.
         # if self.common_step_counter % 120 > 90:
         #     self.commands[:, 2] = 5.
         # else:
         #     self.commands[:, 2] = 0.
 
         self.commands[:] *= ~((self.commands[:, :3].abs() < self.xy_velocity_threshold).all(dim=-1)).unsqueeze(1)
+        self.command_lin_vel_x[env_ids] = self.commands[env_ids, 0].unsqueeze(-1).clone()
+
+        # count = self.common_step_counter % 1000
+        # if count < 700:
+        #     n = int(self.common_step_counter / 100)
+        #     self.commands[:, 0] = 0.3 * n
+        # elif count < 800:
+        #     self.commands[:, 0] = 1.0
+        # elif count < 900:
+        #     self.commands[:, 0] = 0.5
+        # elif count < 1000:
+        #     self.commands[:, 0] = 0.0
 
         # self.commands[:, 0] = 1.0
         # self.commands[:, 1] = 0.0
@@ -1607,37 +1788,37 @@ class A1(VecTask):
         # # self.gait_commands[env_ids, 4] = 0.0
         #
         # self.gait_periods[env_ids] = self.gait_commands[env_ids, 0]
+        # self.ref_delta_phase[env_ids] = 2.0 * torch.pi * self.dt / self.gait_periods[env_ids]
+        # self.gait_commands_count[env_ids] = 0
 
         # ----------------------------------- specific commands -----------------------------------
         if self.common_step_counter == 0:
             self.specific_gait_dict = {}
-            self.specific_gait_dict["walk"] = torch.tensor([0.5, 0.5, 0.5, 0.25, 0.75, 0.0], device=self.device)
-            self.specific_gait_dict["trot"] = torch.tensor([0.6, 0.5, 0.5, 0.5, 0.0, 0.0], device=self.device)
-            self.specific_gait_dict["flying_trot"] = torch.tensor([0.5, 0.35, 0.5, 0.5, 0.0, 0.0], device=self.device)
+            self.specific_gait_dict["walk"] = torch.tensor([0.6, 0.7, 0.75, 0.5, 0.25, 0.0], device=self.device)
+            self.specific_gait_dict["trot"] = torch.tensor([0.5, 0.5, 0.5, 0.5, 0.0, 0.0], device=self.device)
+            self.specific_gait_dict["flying_trot"] = torch.tensor([0.3, 0.25, 0.5, 0.5, 0.0, 0.0], device=self.device)
             self.specific_gait_dict["pace"] = torch.tensor([0.3, 0.7, 0.5, 0.0, 0.5, 0.0], device=self.device)
             self.specific_gait_dict["bound"] = torch.tensor([0.3, 0.3, 0.0, 0.5, 0.5, 0.0], device=self.device)
             self.specific_gait_dict["jump"] = torch.tensor([0.2, 0.5, 0.0, 0.0, 0.0, 0.0], device=self.device)
             self.specific_gait_dict["transverse_gallop"] = torch.tensor([0.24, 0.3, 0.25, 0.6, 0.85, 0.0], device=self.device)
-            self.specific_gait_dict["random"] = torch.tensor([0.3, 0.2, 0.3, 0.7, 0.7, 0.0], device=self.device)
-        if self.common_step_counter % 43 == 0:
+            self.specific_gait_dict["random"] = torch.tensor([0.6, 0.6, 0.37, 0.32, 0.6, 0.0], device=self.device)
+        if self.common_step_counter % 89 == 0:
             # tmp_gaits = list(self.specific_gait_dict.values())
             # index = torch.randint(0, len(tmp_gaits), (1,)).item()
             # self.gait_commands[:, :] = tmp_gaits[index]
-            self.gait_commands[:, :] = self.specific_gait_dict["pace"]
-            # print("to transverse_gallop")
-        if self.common_step_counter % 94 == 0:
             self.gait_commands[:, :] = self.specific_gait_dict["trot"]
+            # self.gait_commands_count[:] = 0
+            # print("to transverse_gallop")
+        if self.common_step_counter % 179 == 0:
+            self.gait_commands[:, :] = self.specific_gait_dict["trot"]
+            # self.gait_commands_count[:] = 0
             # print("to flying_trot")
         self.gait_periods[:] = self.gait_commands[:, 0]
+        self.ref_delta_phase[:] = 2.0 * torch.pi * self.dt / self.gait_periods
 
-        # self.gait_periods[env_ids] = torch.where(self.gait_commands[env_ids, 0] < 1.e-3,
-        #                                          torch.ones_like(self.gait_periods[env_ids]),
-        #                                          self.gait_commands[env_ids, 0] / (self.gait_commands[env_ids, 1] + 1.e-4))
-
-        # print(self.gait_commands[:, 2:5])
     def modify_desired_height_command(self):
         env_ids = (self.progress_buf % self.height_commands_change_random_count == 0).nonzero(as_tuple=False).flatten()
-        self.height_commands[env_ids] = torch_rand_float(self.command_height_range[0], self.command_height_range[1],
+        self.height_commands[env_ids] = torch_rand_float(self.scheduled_command_height_range[0], self.scheduled_command_height_range[1],
                                                          (len(env_ids), 1), device=self.device)
 
         # specific commands
@@ -1663,64 +1844,152 @@ class A1(VecTask):
     def schedule_random(self):
         if self.if_schedule_command:
             if self.common_step_counter == 24 * 0:
-                self.scheduled_command_x_range[0] = 0.
-                self.scheduled_command_x_range[1] = 0.6
+                self.scheduled_command_x_range[0] = -0.0
+                self.scheduled_command_x_range[1] = 0.3
                 self.scheduled_command_y_range[0] = -0.1
                 self.scheduled_command_y_range[1] = 0.1
                 self.scheduled_command_yaw_range[0] = -0.1
                 self.scheduled_command_yaw_range[1] = 0.1
                 self.scheduled_push_velocity_range[0] = -0.1
                 self.scheduled_push_velocity_range[1] = 0.1
+                self.scheduled_command_height_range[0] = 0.29
+                self.scheduled_command_height_range[1] = 0.31
             elif self.common_step_counter == 24 * 200:
-                self.scheduled_command_x_range[0] = 0.
-                self.scheduled_command_x_range[1] = 1.
-                self.scheduled_command_y_range[0] = -0.2
-                self.scheduled_command_y_range[1] = 0.2
-                self.scheduled_command_yaw_range[0] = -0.6
-                self.scheduled_command_yaw_range[1] = 0.6
-                self.scheduled_push_velocity_range[0] = -0.2
-                self.scheduled_push_velocity_range[1] = 0.2
-            elif self.common_step_counter == 24 * 400:
-                self.scheduled_command_x_range[0] = 0.
-                self.scheduled_command_x_range[1] = 1.5
+                self.scheduled_command_x_range[0] = -0.1
+                self.scheduled_command_x_range[1] = 0.5
                 self.scheduled_command_y_range[0] = -0.5
                 self.scheduled_command_y_range[1] = 0.5
+                self.scheduled_command_yaw_range[0] = -0.5
+                self.scheduled_command_yaw_range[1] = 0.5
+                self.scheduled_push_velocity_range[0] = -0.2
+                self.scheduled_push_velocity_range[1] = 0.2
+                self.scheduled_command_height_range[0] = 0.28
+                self.scheduled_command_height_range[1] = 0.32
+            elif self.common_step_counter == 24 * 400:
+                self.scheduled_command_x_range[0] = -0.3
+                self.scheduled_command_x_range[1] = 0.8
+                self.scheduled_command_y_range[0] = -0.8
+                self.scheduled_command_y_range[1] = 0.8
                 self.scheduled_command_yaw_range[0] = -1.5
                 self.scheduled_command_yaw_range[1] = 1.5
                 self.scheduled_push_velocity_range[0] = -0.5
                 self.scheduled_push_velocity_range[1] = 0.5
-            elif self.common_step_counter == 24 * 700:
-                self.scheduled_command_x_range[0] = 0.
-                self.scheduled_command_x_range[1] = 2.
-                self.scheduled_command_y_range[0] = -0.8
-                self.scheduled_command_y_range[1] = 0.8
+                self.scheduled_command_height_range[0] = 0.27
+                self.scheduled_command_height_range[1] = 0.33
+            elif self.common_step_counter == 24 * 600:
+                self.scheduled_command_x_range[0] = -0.6
+                self.scheduled_command_x_range[1] = 1.1
+                self.scheduled_command_y_range[0] = -1.0
+                self.scheduled_command_y_range[1] = 1.0
                 self.scheduled_command_yaw_range[0] = -2.
                 self.scheduled_command_yaw_range[1] = 2.
                 self.scheduled_push_velocity_range[0] = -1.
                 self.scheduled_push_velocity_range[1] = 1.
-            elif self.common_step_counter == 24 * 1100:
-                self.scheduled_command_x_range[0] = 0.
-                self.scheduled_command_x_range[1] = 2.5
-                self.scheduled_command_y_range[0] = -1.
-                self.scheduled_command_y_range[1] = 1.
+                self.scheduled_command_height_range[0] = 0.25
+                self.scheduled_command_height_range[1] = 0.34
+            elif self.common_step_counter == 24 * 800:
+                self.scheduled_command_x_range[0] = -0.8
+                self.scheduled_command_x_range[1] = 1.5
+                self.scheduled_command_y_range[0] = -1.1
+                self.scheduled_command_y_range[1] = 1.1
                 self.scheduled_command_yaw_range[0] = -2.5
                 self.scheduled_command_yaw_range[1] = 2.5
                 self.scheduled_push_velocity_range[0] = -1.5
                 self.scheduled_push_velocity_range[1] = 1.5
-            elif self.common_step_counter == 24 * 1500:
-                self.scheduled_command_x_range[0] = 0.
-                self.scheduled_command_x_range[1] = 3.
+                self.scheduled_command_height_range[0] = 0.23
+                self.scheduled_command_height_range[1] = 0.35
+            elif self.common_step_counter == 24 * 1200:
+                self.scheduled_command_x_range[0] = -1.0
+                self.scheduled_command_x_range[1] = 2.0
                 self.scheduled_command_y_range[0] = -1.2
                 self.scheduled_command_y_range[1] = 1.2
+                self.scheduled_command_yaw_range[0] = -3.0
+                self.scheduled_command_yaw_range[1] = 3.0
+                self.scheduled_push_velocity_range[0] = -2.
+                self.scheduled_push_velocity_range[1] = 2.
+                self.scheduled_command_height_range[0] = 0.20
+                self.scheduled_command_height_range[1] = 0.36
+            elif self.common_step_counter == 24 * 1600:
+                self.scheduled_command_x_range[0] = -1.0
+                self.scheduled_command_x_range[1] = 2.5
+                self.scheduled_command_y_range[0] = -1.5
+                self.scheduled_command_y_range[1] = 1.5
+                self.scheduled_command_yaw_range[0] = -3.0
+                self.scheduled_command_yaw_range[1] = 3.0
+                self.scheduled_push_velocity_range[0] = -2.
+                self.scheduled_push_velocity_range[1] = 2.
+                self.scheduled_command_height_range[0] = 0.20
+                self.scheduled_command_height_range[1] = 0.36
+            elif self.common_step_counter == 24 * 2000:
+                self.scheduled_command_x_range[0] = -1.0
+                self.scheduled_command_x_range[1] = 3.0
+                self.scheduled_command_y_range[0] = -1.5
+                self.scheduled_command_y_range[1] = 1.5
                 self.scheduled_command_yaw_range[0] = -3.14
                 self.scheduled_command_yaw_range[1] = 3.14
                 self.scheduled_push_velocity_range[0] = -2.
                 self.scheduled_push_velocity_range[1] = 2.
+                self.scheduled_command_height_range[0] = 0.20
+                self.scheduled_command_height_range[1] = 0.36
+            elif self.common_step_counter == 24 * 3000:
+                self.scheduled_command_x_range[0] = -1.0
+                self.scheduled_command_x_range[1] = 4.0
+                self.scheduled_command_y_range[0] = -1.5
+                self.scheduled_command_y_range[1] = 1.5
+                self.scheduled_command_yaw_range[0] = -3.14
+                self.scheduled_command_yaw_range[1] = 3.14
+                self.scheduled_push_velocity_range[0] = -2.
+                self.scheduled_push_velocity_range[1] = 2.
+                self.scheduled_command_height_range[0] = 0.20
+                self.scheduled_command_height_range[1] = 0.36
+            elif self.common_step_counter == 24 * 4000:
+                self.scheduled_command_x_range[0] = -1.0
+                self.scheduled_command_x_range[1] = 5.0
+                self.scheduled_command_y_range[0] = -1.5
+                self.scheduled_command_y_range[1] = 1.5
+                self.scheduled_command_yaw_range[0] = -3.14
+                self.scheduled_command_yaw_range[1] = 3.14
+                self.scheduled_push_velocity_range[0] = -2.
+                self.scheduled_push_velocity_range[1] = 2.
+                self.scheduled_command_height_range[0] = 0.20
+                self.scheduled_command_height_range[1] = 0.36
+            elif self.common_step_counter == 24 * 5000:
+                self.scheduled_command_x_range[0] = -1.0
+                self.scheduled_command_x_range[1] = 6.0
+                self.scheduled_command_y_range[0] = -1.5
+                self.scheduled_command_y_range[1] = 1.5
+                self.scheduled_command_yaw_range[0] = -3.14
+                self.scheduled_command_yaw_range[1] = 3.14
+                self.scheduled_push_velocity_range[0] = -2.
+                self.scheduled_push_velocity_range[1] = 2.
+                self.scheduled_command_height_range[0] = 0.20
+                self.scheduled_command_height_range[1] = 0.36
 
-    def gait_tracking(self, desired_gait, gait_params_act_raw_last, obs):
-        obs_shaped = torch.cat([desired_gait, obs[:, :36], gait_params_act_raw_last, obs[:, 47:75]], dim=-1)
+    # def gait_tracking(self, desired_gait, gait_params_act_raw_last, obs):
+    #     obs_shaped = torch.cat([desired_gait, obs[:, :36], gait_params_act_raw_last, obs[:, 47:75]], dim=-1)
+    #     with torch.no_grad():
+    #         return self.gait_tracking_policy(obs_shaped.clone().detach()) * 0.25
+
+    def gait_tracking(self):
+        obs_shaped = torch.cat([self.gait_commands,
+                                self.height_commands,
+                                self.base_lin_vel,
+                                self.base_ang_vel,
+                                self.euler_roll,
+                                self.euler_pitch,
+                                self.commands[:, :3],
+                                self.dof_pos,
+                                self.dof_vel,
+                                self.gait_params_act_raw_last,
+                                self.feet_position_hip,
+                                self.feet_lin_vel_body,
+                                self.feet_contact_state_obs], dim=-1)
         with torch.no_grad():
-            return self.gait_tracking_policy(obs_shaped.clone().detach())
+            gait_tracked = self.gait_tracking_policy(obs_shaped.clone().detach())
+            gait_tracked = torch.clip(gait_tracked, min=-4.0, max=4.0) * 0.25
+            self.gait_params_act_raw_last = gait_tracked.clone()
+            gait_tracked[:, :5] = (gait_tracked[:, :5] + 1.0) * 0.5
+            return gait_tracked
 
     def restore_gait_tracking_policy(self, fn):
         from rl_games.algos_torch import torch_ext
@@ -1754,6 +2023,18 @@ class A1(VecTask):
                 self.gait_tracking_policy.running_mean_std.load_state_dict(input_normalize_params)
         print("gait tracking policy actor net initialized.")
 
+    def calculate_ref_timing_phase(self):
+        env_ids_init = (self.gait_commands_count == 0).nonzero(as_tuple=False).flatten()
+        env_ids_running = (self.gait_commands_count > 0).nonzero(as_tuple=False).flatten()
+
+        self.ref_phase_pi_current[env_ids_init] = torch.cat((self.gait_commands[env_ids_init, 5].unsqueeze(-1), self.gait_commands[env_ids_init, 2:5]), dim=-1) * torch.pi * 2.0
+        self.ref_phase_pi_current[env_ids_running] += self.ref_delta_phase[env_ids_running].unsqueeze(-1)
+        self.ref_phase_pi_current[env_ids_running] %= 2 * torch.pi
+
+        for i in range(4):
+            self.ref_phase_sincos_current[:, 2 * i] = torch.sin(self.ref_phase_pi_current[:, i])
+            self.ref_phase_sincos_current[:, 2 * i + 1] = torch.cos(self.ref_phase_pi_current[:, i])
+
 
 # terrain generator
 from isaacgym.terrain_utils import *
@@ -1779,6 +2060,8 @@ class Terrain:
         self.num_maps = self.env_rows * self.env_cols
         self.num_per_env = int(num_robots / self.num_maps)
         self.env_origins = np.zeros((self.env_rows, self.env_cols, 3))
+        self.env_target_points = np.zeros((self.env_rows, self.env_cols, 8, 3))
+        self.env_target_points_relative = np.zeros((8, 3))
 
         self.width_per_env_pixels = int(self.env_width / self.horizontal_scale)
         self.length_per_env_pixels = int(self.env_length / self.horizontal_scale)
@@ -1822,6 +2105,23 @@ class Terrain:
 
         t2 = time.time()
         print(f"time2: {(t2 - t1)} s")
+
+        # get target points
+        rel_x = 0.5 * self.env_length
+        rel_y = 0.5 * self.env_width
+        bias = 0.1 * self.env_width
+        self.env_target_points_relative[0] = np.array([rel_x, bias, 0.0])
+        self.env_target_points_relative[1] = np.array([rel_x, rel_y, 0.0])
+        self.env_target_points_relative[2] = np.array([rel_x, -rel_y, 0.0])
+        self.env_target_points_relative[3] = np.array([-rel_x, -bias, 0.0])
+        self.env_target_points_relative[4] = np.array([-rel_x, rel_y, 0.0])
+        self.env_target_points_relative[5] = np.array([-rel_x, -rel_y, 0.0])
+        self.env_target_points_relative[6] = np.array([bias, rel_y, 0.0])
+        self.env_target_points_relative[7] = np.array([-bias, -rel_y, 0.0])
+        for i in range(self.env_rows):
+            for j in range(self.env_cols):
+                self.env_target_points[i, j] = self.env_origins[i, j] + self.env_target_points_relative
+
 
         if self.use_multiprocess:
             self.shm_height_field_raw.close()
@@ -1879,15 +2179,15 @@ class Terrain:
             choice = np.random.uniform(0, 1)
             difficulty = np.random.uniform(0, 1)
             uniform_difficulty = np.random.uniform(0, 1)
-            uniform_difficulty = 1
+            # uniform_difficulty = 1
             if not self.add_terrain_obs:
                 if choice < 0.0:
                     pass
                 elif choice < 0.4:
-                    random_uniform_terrain(terrain, min_height=-0.025 * uniform_difficulty,
-                                           max_height=0.025 * uniform_difficulty, step=0.05, downsampled_scale=0.1)
+                    random_uniform_terrain(terrain, min_height=-0.1 * uniform_difficulty,
+                                           max_height=0.1 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
                 elif choice < 0.6:
-                    slope = 0.2 * difficulty
+                    slope = 0.6 * difficulty
                     if choice < 0.5:
                         slope *= -1
                     pyramid_sloped_terrain(terrain, slope=slope, platform_size=0.5)
@@ -1895,15 +2195,15 @@ class Terrain:
                         random_uniform_terrain(terrain, min_height=-0.005 * uniform_difficulty,
                                                max_height=0.005 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
                 elif choice < 0.8:
-                    step_height = 0.05 * difficulty
+                    step_height = 0.15 * difficulty
                     if choice < 0.7:
                         step_height *= -1
                     pyramid_stairs_terrain(terrain, step_width=0.31, step_height=step_height, platform_size=3.)
                     if np.random.choice([0, 1]):
-                        random_uniform_terrain(terrain, min_height=-0.002 * uniform_difficulty,
-                                               max_height=0.002 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
+                        random_uniform_terrain(terrain, min_height=-0.005 * uniform_difficulty,
+                                               max_height=0.005 * uniform_difficulty, step=0.05, downsampled_scale=0.5)
                 else:
-                    max_height = 0.03 * difficulty
+                    max_height = 0.2 * difficulty
                     discrete_obstacles_terrain(terrain, max_height=max_height, min_size=1., max_size=2., num_rects=200,
                                                platform_size=3.)
                     if np.random.choice([0, 1]):
@@ -1948,46 +2248,46 @@ class Terrain:
             difficulty = i / num_levels  # - 1
             choice = j / num_terrains
 
-            if not self.add_terrain_obs:
-                if choice < 0.2:
+            if not self.add_terrain_obs or True:
+                if choice < 0.1:
                     pass
+                elif choice < 0.2:
+                    random_uniform_terrain(terrain, min_height=-0.1 * difficulty,
+                                           max_height=0.1 * difficulty, step=0.05, downsampled_scale=0.5)
                 elif choice < 0.4:
-                    random_uniform_terrain(terrain, min_height=-0.05 * difficulty,
-                                           max_height=0.05 * difficulty, step=0.05, downsampled_scale=0.5)
-                elif choice < 0.6:
-                    slope = 0.2 * difficulty
+                    slope = 0.8 * difficulty
                     uniform_height = 0.003 * difficulty
-                    if choice < 0.5:
+                    if choice < 0.3:
                         slope *= -1
                         pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
-                        if choice >= 0.45:
+                        if choice >= 0.25:
                             random_uniform_terrain(terrain, min_height=-uniform_height, max_height=uniform_height,
                                                    step=0.05, downsampled_scale=0.5)
                     else:
                         pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
-                        if choice >= 0.55:
+                        if choice >= 0.35:
                             random_uniform_terrain(terrain, min_height=-uniform_height, max_height=uniform_height,
                                                    step=0.05, downsampled_scale=0.5)
-                elif choice < 0.8:
-                    step_height = 0.05 * difficulty
+                elif choice < 0.7:
+                    step_height = 0.15 * difficulty
                     uniform_height = 0.02 * difficulty
-                    if choice < 0.7:
+                    if choice < 0.55:
                         step_height *= -1
+                        pyramid_stairs_terrain(terrain, step_width=0.31, step_height=step_height, platform_size=3.)
+                        if choice >= 0.5:
+                            random_uniform_terrain(terrain, min_height=-uniform_height, max_height=uniform_height,
+                                                   step=0.05, downsampled_scale=0.5)
+                    else:
                         pyramid_stairs_terrain(terrain, step_width=0.31, step_height=step_height, platform_size=3.)
                         if choice >= 0.65:
                             random_uniform_terrain(terrain, min_height=-uniform_height, max_height=uniform_height,
                                                    step=0.05, downsampled_scale=0.5)
-                    else:
-                        pyramid_stairs_terrain(terrain, step_width=0.31, step_height=step_height, platform_size=3.)
-                        if choice >= 0.75:
-                            random_uniform_terrain(terrain, min_height=-uniform_height, max_height=uniform_height,
-                                                   step=0.05, downsampled_scale=0.5)
                 else:
-                    max_height = 0.03 * difficulty
-                    uniform_height = 0.005 * difficulty
+                    max_height = 0.1 + 0.3 * difficulty
+                    uniform_height = 0.05 * difficulty
                     discrete_obstacles_terrain(terrain, max_height=max_height, min_size=1., max_size=2.,
                                                num_rects=200, platform_size=3.)
-                    if choice >= 0.9:
+                    if choice >= 0.5:
                         random_uniform_terrain(terrain, min_height=-uniform_height, max_height=uniform_height, step=0.05,
                                                downsampled_scale=0.5)
             else:

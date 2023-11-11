@@ -28,7 +28,7 @@ class VecControllerBridge:
 
         self.count = 0
 
-        self.motion_order = torch.arange(start=0, end=40, dtype=torch.int64, device=self.device, requires_grad=False)
+        self.motion_order = torch.arange(start=0, end=56, dtype=torch.int64, device=self.device, requires_grad=False)
         # for i in range(4):
         #     self.motion_order[3 + 4 * i: 7 + 4 * i] = self.contact_order + (3 + 4 * i)
         self.motion_order[3:7] = self.contact_order + 3  # gait_period_offset
@@ -36,6 +36,10 @@ class VecControllerBridge:
         self.motion_order[11:15] = 11 + torch.tensor([3, 0, 1, 2], dtype=torch.int64, device=self.device, requires_grad=False)  # gait_phase_offset ([FL RR RL FR] -> [FR FL RR RL])
         self.motion_order[15:19] = self.contact_order + 15  # swing_clearance_offset
         self.motion_order[28:40] = self.torque_order + 28  # des_feet_pos_rel_hip
+        self.motion_order[40:44] = self.contact_order + 40  # feet_mid_bias_xy->x
+        self.motion_order[44:48] = self.contact_order + 44  # feet_mid_bias_xy->y
+        self.motion_order[48:52] = self.contact_order + 48  # feet_lift_height_bias->height
+        self.motion_order[52:56] = self.contact_order + 52  # feet_lift_height_bias->phase_bias
 
         self.torque_numpy = np.zeros((self.num_controllers, 12), dtype=np.float32)
         self.tau_ff_numpy = np.zeros((self.num_controllers, 12), dtype=np.float32)

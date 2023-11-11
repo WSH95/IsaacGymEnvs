@@ -33,6 +33,10 @@ class MotionPlanningInterface:
                                                  requires_grad=False)
         self.des_feet_pos_rel_hip = torch.zeros(self.num_robots, 12, dtype=torch.float, device=self.device,
                                                  requires_grad=False)
+        self.feet_mid_bias_xy = torch.zeros(self.num_robots, 8, dtype=torch.float, device=self.device,
+                                                requires_grad=False)  # [x_FL, x_FR, x_RL, x_RR, y_FL, y_FR, y_RL, y_RR]
+        self.feet_lift_height_bias = torch.zeros(self.num_robots, 8, dtype=torch.float, device=self.device,
+                                                requires_grad=False)  # [h_FL, h_FR, h_RL, h_RR, phase_FL, phase_FR, phase_RL, phase_RR]
 
     def get_motion_command(self):
         return self.motion_planning_cmd.clone()
@@ -48,7 +52,9 @@ class MotionPlanningInterface:
                                                  self.body_orientation,
                                                  self.body_linear_velocity,
                                                  self.body_angular_velocity,
-                                                 self.des_feet_pos_rel_hip],
+                                                 self.des_feet_pos_rel_hip,
+                                                 self.feet_mid_bias_xy,
+                                                 self.feet_lift_height_bias],
                                                 dim=-1)
 
     def update_gait_planning(self,
@@ -106,6 +112,12 @@ class MotionPlanningInterface:
     def update_des_feet_pos_rel_hip(self, des_feet_pos_rel_hip: torch.Tensor):
         self.des_feet_pos_rel_hip = des_feet_pos_rel_hip.clone()
 
+    def update_feet_mid_bias_xy(self, feet_mid_bias_xy: torch.Tensor):
+        self.feet_mid_bias_xy = feet_mid_bias_xy.clone()
+
+    def update_feet_lift_height(self, feet_lift_height_bias: torch.Tensor):
+        self.feet_lift_height_bias = feet_lift_height_bias.clone()
+
     def change_gait_planning(self, flag: bool):
         if flag:
             self.gait_to_change[:] = 1
@@ -121,6 +133,14 @@ class MotionPlanningInterface:
         else:
             self.body_state_to_change[:] = 0
             self.motion_planning_cmd[:, 1] = 0
+
+    def set_gait_planning_flag_indexed(self, env_ids, flag: bool):
+        if flag:
+            self.gait_to_change[env_ids] = 1
+            self.motion_planning_cmd[env_ids, 0] = 1
+        else:
+            self.gait_to_change[env_ids] = 0
+            self.motion_planning_cmd[env_ids, 0] = 0
 
 
 import time
