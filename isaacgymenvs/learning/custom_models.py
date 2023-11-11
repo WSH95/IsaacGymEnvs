@@ -19,7 +19,7 @@ class CustomModelContinuous(ModelA2CContinuousLogStd):
             input_dict['obs'] = self.norm_obs(input_dict['obs'])
             mu, logstd, value, states = self.a2c_network(input_dict)
             sigma = torch.exp(logstd)
-            sigma = torch.clamp(sigma, 0.2, None)
+            # sigma = torch.clamp(sigma, 0.2, None)
             distr = torch.distributions.Normal(mu, sigma, validate_args=False)
             if is_train:
                 entropy = distr.entropy().sum(dim=-1)
