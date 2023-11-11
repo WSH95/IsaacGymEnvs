@@ -256,6 +256,10 @@ class VecTask(Env):
         for env_id in range(self.num_envs):
             self.extern_actor_params[env_id] = None
 
+        self.armature_coeffs_real = torch.zeros(self.num_envs, 1, dtype=torch.float, device=self.device,
+                                                requires_grad=False)
+        self.friction_coeffs_real = torch.zeros(self.num_envs, 1, dtype=torch.float, device=self.device,
+                                                requires_grad=False)
         # create envs, sim and viewer
         self.sim_initialized = False
         self.create_sim()  # implemented by the extended classes
@@ -286,17 +290,41 @@ class VecTask(Env):
             self.gym.subscribe_viewer_keyboard_event(
                 self.viewer, gymapi.KEY_R, "record_frames")
 
-            # set the camera position based on up axis
-            sim_params = self.gym.get_sim_params(self.sim)
-            if sim_params.up_axis == gymapi.UP_AXIS_Z:
-                cam_pos = gymapi.Vec3(20.0, 25.0, 3.0)
-                cam_target = gymapi.Vec3(10.0, 15.0, 0.0)
-            else:
-                cam_pos = gymapi.Vec3(20.0, 3.0, 25.0)
-                cam_target = gymapi.Vec3(10.0, 0.0, 15.0)
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_F, "free_cam")
+            for i in range(9):
+                self.gym.subscribe_viewer_keyboard_event(
+                    self.viewer, getattr(gymapi, "KEY_" + str(i)), "lookat" + str(i))
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_LEFT_BRACKET, "prev_id")
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_RIGHT_BRACKET, "next_id")
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_SPACE, "pause")
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_W, "vx_plus")
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_S, "vx_minus")
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_A, "left_turn")
+            self.gym.subscribe_viewer_keyboard_event(
+                self.viewer, gymapi.KEY_D, "right_turn")
 
-            self.gym.viewer_camera_look_at(
-                self.viewer, None, cam_pos, cam_target)
+            # set the camera position based on up axis
+            # sim_params = self.gym.get_sim_params(self.sim)
+            # if sim_params.up_axis == gymapi.UP_AXIS_Z:
+            #     cam_pos = gymapi.Vec3(20.0, 25.0, 3.0)
+            #     cam_target = gymapi.Vec3(10.0, 15.0, 0.0)
+            # else:
+            #     cam_pos = gymapi.Vec3(20.0, 3.0, 25.0)
+            #     cam_target = gymapi.Vec3(10.0, 0.0, 15.0)
+            #
+            # self.gym.viewer_camera_look_at(
+            #     self.viewer, None, cam_pos, cam_target)
+
+        self.free_cam = False
+        self.lookat_id = 0
+        self.lookat_vec = torch.tensor([-0, 2, 1], requires_grad=False, device=self.device)
 
     def allocate_buffers(self):
         """Allocate the observation, states, etc. buffers.
@@ -371,8 +399,9 @@ class VecTask(Env):
         if self.dr_randomizations.get('actions', None):
             actions = self.dr_randomizations['actions']['noise_lambda'](actions)
 
-        # print(f"action: {actions[2]}")
-        action_tensor = torch.clamp(actions, -self.clip_actions, self.clip_actions)
+        # print(f"action: {actions[0]}")
+        # action_tensor = torch.clamp(actions, -self.clip_actions, self.clip_actions)
+        action_tensor = actions.clone()
 
         # apply actions
         self.pre_physics_step(action_tensor)
@@ -462,7 +491,7 @@ class VecTask(Env):
 
         return self.obs_dict, done_env_ids
 
-    def render(self, mode="rgb_array"):
+    def render_old(self, mode="rgb_array"):
         """Draw the frame to the viewer, and check for keyboard events."""
         if self.viewer:
             # check for window closed
@@ -518,6 +547,87 @@ class VecTask(Env):
             if self.virtual_display and mode == "rgb_array":
                 img = self.virtual_display.grab()
                 return np.array(img)
+
+    def set_camera(self, position, lookat):
+        """ Set camera position and direction
+        """
+        cam_pos = gymapi.Vec3(position[0], position[1], position[2])
+        cam_target = gymapi.Vec3(lookat[0], lookat[1], lookat[2])
+        self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
+
+    def lookat(self, i):
+        look_at_pos = self.root_states[i, :3].clone()
+        cam_pos = look_at_pos + self.lookat_vec
+        self.set_camera(cam_pos, look_at_pos)
+        
+    def render(self, sync_frame_time=True):
+        if self.viewer:
+            # check for window closed
+            if self.gym.query_viewer_has_closed(self.viewer):
+                sys.exit()
+            if not self.free_cam:
+                self.lookat(self.lookat_id)
+            # check for keyboard events
+            for evt in self.gym.query_viewer_action_events(self.viewer):
+                if evt.action == "QUIT" and evt.value > 0:
+                    sys.exit()
+                elif evt.action == "toggle_viewer_sync" and evt.value > 0:
+                    self.enable_viewer_sync = not self.enable_viewer_sync
+
+                if not self.free_cam:
+                    for i in range(9):
+                        if evt.action == "lookat" + str(i) and evt.value > 0:
+                            self.lookat(i)
+                            self.lookat_id = i
+                    if evt.action == "prev_id" and evt.value > 0:
+                        self.lookat_id = (self.lookat_id - 1) % self.num_envs
+                        self.lookat(self.lookat_id)
+                    if evt.action == "next_id" and evt.value > 0:
+                        self.lookat_id = (self.lookat_id + 1) % self.num_envs
+                        self.lookat(self.lookat_id)
+                    if evt.action == "vx_plus" and evt.value > 0:
+                        self.commands[self.lookat_id, 0] += 0.2
+                    if evt.action == "vx_minus" and evt.value > 0:
+                        self.commands[self.lookat_id, 0] -= 0.2
+                    if evt.action == "left_turn" and evt.value > 0:
+                        self.commands[self.lookat_id, 3] += 0.5
+                    if evt.action == "right_turn" and evt.value > 0:
+                        self.commands[self.lookat_id, 3] -= 0.5
+                if evt.action == "free_cam" and evt.value > 0:
+                    self.free_cam = not self.free_cam
+                    if self.free_cam:
+                        self.set_camera(self.cfg["env"]["viewer"]["pos"], self.cfg["env"]["viewer"]["lookat"])
+
+                if evt.action == "pause" and evt.value > 0:
+                    self.pause = True
+                    while self.pause:
+                        time.sleep(0.1)
+                        self.gym.draw_viewer(self.viewer, self.sim, True)
+                        for evt in self.gym.query_viewer_action_events(self.viewer):
+                            if evt.action == "pause" and evt.value > 0:
+                                self.pause = False
+                        if self.gym.query_viewer_has_closed(self.viewer):
+                            sys.exit()
+
+            # fetch results
+            if self.device != 'cpu':
+                self.gym.fetch_results(self.sim, True)
+
+            self.gym.poll_viewer_events(self.viewer)
+            # step graphics
+            if self.enable_viewer_sync:
+                self.gym.step_graphics(self.sim)
+                self.gym.draw_viewer(self.viewer, self.sim, True)
+                if sync_frame_time:
+                    self.gym.sync_frame_time(self.sim)
+            else:
+                self.gym.poll_viewer_events(self.viewer)
+
+            if not self.free_cam:
+                p = self.gym.get_viewer_camera_transform(self.viewer, None).p
+                cam_trans = torch.tensor([p.x, p.y, p.z], requires_grad=False, device=self.device)
+                look_at_pos = self.root_states[self.lookat_id, :3].clone()
+                self.lookat_vec = cam_trans - look_at_pos
 
     def __parse_sim_params(self, physics_engine: str, config_sim: Dict[str, Any]) -> gymapi.SimParams:
         """Parse the config dictionary for physics stepping settings.

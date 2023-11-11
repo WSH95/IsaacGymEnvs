@@ -27,6 +27,7 @@ _doxygen
 logs*
 nn/
 runs/
+gait_evaluate_table/
 .idea
 outputs/
 *.hydra*

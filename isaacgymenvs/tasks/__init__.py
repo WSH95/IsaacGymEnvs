@@ -49,6 +49,7 @@ from .trifinger import Trifinger
 from .a1 import A1  ### wsh_annotation: add a1 task
 from .a1_test import A1Test
 from .a1_test2 import A1Test2
+from .a1_record import A1Record
 
 from .allegro_kuka.allegro_kuka_reorientation import AllegroKukaReorientation
 from .allegro_kuka.allegro_kuka_regrasping import AllegroKukaRegrasping
@@ -111,5 +112,6 @@ isaacgym_task_map = {
     "Trifinger": Trifinger,
     "A1": A1,  ### wsh_annotation: add a1 task
     "A1Test": A1Test,
-    "A1Test2": A1Test2
+    "A1Test2": A1Test2,
+    "A1Record": A1Record
 }

@@ -23,7 +23,7 @@ params:
         fixed_sigma: True
 
     mlp:
-      units: [128, 128] # [512, 256, 128]
+      units: [512, 256, 128] # [512, 256, 128]
       activation: elu
       d2rl: False
 
@@ -44,7 +44,7 @@ params:
   load_path: ${...checkpoint} # path to the checkpoint to load
 
   config:
-    name: ${resolve_default:A1,${....experiment}}
+    name: ${resolve_default:A1Record,${....experiment}}
     full_experiment_name: ${.name}
     env_name: rlgpu
     ppo: True

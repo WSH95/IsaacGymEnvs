@@ -222,12 +222,15 @@ def launch_rlg_hydra(cfg: DictConfig):
         import shutil
         task_file_name = convert_name(cfg.task.name)
         task_file_path = os.path.join('tasks', task_file_name + '.py')
-        shutil.copy(task_file_path, experiment_dir)
+        dst_path = os.path.join(experiment_dir, task_file_name + '_record.py')
+        shutil.copy(task_file_path, dst_path)
         # copy config files
         cfg_task_file_path = os.path.join('cfg/task', cfg.task.name + '.yaml')
+        dst_cfg_task_file_path = os.path.join(experiment_dir, cfg.task.name + 'Record.yaml')
         cfg_train_file_path = os.path.join('cfg/train', cfg.task.name + 'PPO.yaml')
-        shutil.copy(cfg_task_file_path, experiment_dir)
-        shutil.copy(cfg_train_file_path, experiment_dir)
+        dst_cfg_train_file_path = os.path.join(experiment_dir, cfg.task.name + 'RecordPPO.yaml')
+        shutil.copy(cfg_task_file_path, dst_cfg_task_file_path)
+        shutil.copy(cfg_train_file_path, dst_cfg_train_file_path)
 
     runner.run({
         'train': not cfg.test,
