@@ -23,6 +23,7 @@ class GaitTrackingPolicy(nn.Module):
     def forward(self, obs):
         norm_obs = self.norm_obs(obs)
         mu = self.a2c_network(norm_obs)
+        # print(mu[0])
         return mu
 
     def norm_obs(self, observation):
