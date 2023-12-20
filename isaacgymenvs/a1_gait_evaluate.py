@@ -12,13 +12,14 @@ from tqdm import tqdm
 from isaacgymenvs.utils.controller_bridge import VecControllerBridge
 from isaacgymenvs.utils.motion_planning_interface import MotionPlanningInterface
 import time
+from datetime import datetime
 import progressbar
 
 NUM_ENVS = 6
 HEADLESS = False
 USE_GPU = True
 SIM_DT = 0.002
-DECIMATION = 1
+DECIMATION = 5
 MAX_EPISODE_LEN_S = 10.0
 SUB_STEPS = 1
 ASSERT_PATH = "/home/wsh/Documents/pyProjects/IsaacGymEnvs/assets/urdf/a1/urdf/a1_old.urdf"
@@ -46,6 +47,10 @@ class A1Env:
         torch._C._jit_set_profiling_mode(False)
         torch._C._jit_set_profiling_executor(False)
 
+        self.render_fps: int = -1
+        self.last_frame_time: float = 0.0
+        self.control_freq_inv = 1
+
         self.gym = gymapi.acquire_gym()
         self.physics_engine = gymapi.SIM_PHYSX
         self._create_sim()
@@ -63,11 +68,14 @@ class A1Env:
             self.step()
 
     def step(self):
-        if self.common_step_counter % 10 == 0:
+        if self.common_step_counter % 1 == 0:
             self.render()
 
+        torques, tau_ff_mpc, q_des, qd_des = self._cal_torque()
+
         for i in range(self.decimation):
-            torques = self._cal_torque()
+            # torques, _, _, _ = self._cal_torque()
+            torques = self._cal_pd(tau_ff_mpc, q_des, qd_des)
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
             self.torques[:] = torques.view(self.torques.shape)
             self.gym.simulate(self.sim)
@@ -112,6 +120,20 @@ class A1Env:
         self.motion_planning_interface.change_gait_planning(False)
         self.motion_planning_interface.change_body_planning(False)
 
+        return torques, tau_ff_mpc, q_des, qd_des
+
+    def _cal_pd(self, tau_ff_mpc, q_des, qd_des, kp=25., kd=1.):
+        v_max = 20.0233
+        v_max /= 1.0
+        tau_max = 33.5 * 1.0
+        k = -3.953886
+        torques = torch.clip(tau_ff_mpc + kp * (q_des - self.dof_pos) + kd * (qd_des - self.dof_vel), -tau_max, tau_max)
+        tmp_max_torque = torch.clip(k * (self.dof_vel - v_max), 0, tau_max)
+        tmp_min_torque = torch.clip(k * (self.dof_vel + v_max), -tau_max, 0)
+        torques[:] = torch.where(self.dof_vel > tau_max / k + v_max,
+                                 torch.clip(torques, -tau_max * torch.ones_like(torques), tmp_max_torque), torques)
+        torques[:] = torch.where(self.dof_vel < -(tau_max / k + v_max),
+                                 torch.clip(torques, tmp_min_torque, tau_max * torch.ones_like(torques)), torques)
         return torques
 
     def _update_pre_state(self):
@@ -368,11 +390,11 @@ class A1Env:
                                                      gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
 
     def _resample_commands(self, env_ids):
-        self.vel_commands[env_ids, 0] = 1.2
+        self.vel_commands[env_ids, 0] = 1.
         self.vel_commands[env_ids, 1] = 0.
         self.vel_commands[env_ids, 3] = 0.
 
-        self.gait_commands[env_ids] = torch.tensor([0.4, 0.4, 0.5, 0.6, 0.1, 0.0], dtype=torch.float, device=self.device, requires_grad=False)
+        self.gait_commands[env_ids] = torch.tensor([0.6, 0.5, 0.5, 0.5, 0.0, 0.0], dtype=torch.float, device=self.device, requires_grad=False)
 
     def _update_motion_gait(self, env_ids):
         gait_period_offset = (self.gait_commands[:, 0] - 0.5).unsqueeze(-1).repeat(1, 4)
@@ -505,6 +527,20 @@ class A1Env:
                 self.gym.draw_viewer(self.viewer, self.sim, True)
                 if sync_frame_time:
                     self.gym.sync_frame_time(self.sim)
+                # it seems like in some cases sync_frame_time still results in higher-than-realtime framerate
+                # this code will slow down the rendering to real time
+                now = time.time()
+                delta = now - self.last_frame_time
+                if self.render_fps < 0:
+                    # render at control frequency
+                    render_dt = self.dt * self.control_freq_inv  # render every control step
+                else:
+                    render_dt = 1.0 / self.render_fps
+
+                if delta < render_dt:
+                    time.sleep(render_dt - delta)
+
+                self.last_frame_time = time.time()
             else:
                 self.gym.poll_viewer_events(self.viewer)
 
@@ -554,42 +590,50 @@ class A1GaitEvaluate(A1Env):
 
     def _init_gait_buf(self):
         vx = torch.arange(-0.6, 3.1, 0.3, device=self.device)
-        period = torch.arange(0.2, 0.75, 0.1, device=self.device)
-        duty = torch.arange(0.2, 0.75, 0.1, device=self.device)
+        period = torch.arange(0.2, 0.76, 0.05, device=self.device)
+        duty = torch.arange(0.2, 0.76, 0.05, device=self.device)
         phase2 = torch.arange(0, 0.95, 0.1, device=self.device)
         phase3 = torch.arange(0, 0.95, 0.1, device=self.device)
         phase4 = torch.arange(0, 0.95, 0.1, device=self.device)
 
-        # vx = torch.arange(0., 0.2, 0.3, device=self.device)
+        # vx = torch.arange(0.3, 0.5, 0.3, device=self.device)
         # period = torch.arange(0.3, 0.35, 0.1, device=self.device)
         # duty = torch.arange(0.5, 0.55, 0.1, device=self.device)
-        # phase2 = torch.arange(0, 0.55, 0.1, device=self.device)
-        # phase3 = torch.arange(0, 0.55, 0.1, device=self.device)
+        # phase2 = torch.arange(0.5, 0.65, 0.1, device=self.device)
+        # phase3 = torch.arange(0.5, 0.65, 0.1, device=self.device)
         # phase4 = torch.arange(0, 0.55, 0.1, device=self.device)
 
         command_table = permutations([vx, period, duty, phase2, phase3, phase4])
-        # self.command_evaluate_table: [vx, period, duty, phase2, phase3, phase4, height_mean, vx_mean, mech_power_mean, total_power_mean]
-        self.command_evaluate_table = torch.cat([command_table, torch.zeros(command_table.shape[0], 4, device=self.device)], dim=1)
+        # self.command_evaluate_table: [vx, period, duty, phase2, phase3, phase4] +
+        # [vx_mean, vy_mean, vz_mean, wx_mean, wy_mean, wz_mean, rx_mean, ry_mean, rz_mean] +
+        # [vx_std, vy_std, vz_std, wx_std, wy_std, wz_std, rx_std, ry_std, rz_std] +
+        # [vx_bias_max, vy_bias_max, vz_bias_max, wx_bias_max, wy_bias_max, wz_bias_max, rx_bias_max, ry_bias_max, rz_bias_max] +
+        # [h_mean, h_std, h_bias_max, target_position_bias_x, target_position_bias_y, power_mech_mean, power_total_mean, contact_force_max]
+        self.command_evaluate_table = torch.cat([command_table, torch.zeros(command_table.shape[0], 35, device=self.device)], dim=1)
         self.command_evaluate_table[:, -1] = -1.  # -1 denotes it did not stick to the end
         self.total_command_num = len(self.command_evaluate_table)
+        print(f"total num: {self.total_command_num}")
         self.table_index = torch.arange(self.total_command_num, dtype=torch.long, device=self.device, requires_grad=False)
         self.visited_count = 0
-        self.record_num = 500  # during latest 1 second
+        self.visited_count_last = 0
+        self.record_num = 1500  # during latest 3 second
         self.record_index = torch.zeros(self.num_envs, dtype=torch.long, device=self.device, requires_grad=False)
         # self.record_command_buf: [vx, period, duty, phase2, phase3, phase4]
         self.record_command_buf = torch.zeros(self.num_envs, 6, dtype=torch.float, device=self.device, requires_grad=False)
-        # self.record_evaluate_buf: [height_buf, vx_buf, mech_power_buf, total_power_buf]
-        self.record_evaluate_buf = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device, requires_grad=False)
+        # self.record_evaluate_buf: [vx, vy, vz, wx, wy, wz, rx, ry, rz, height, position_x, position_y, power_mech, power_total, contact_force_max]
+        self.record_evaluate_buf = torch.zeros(self.num_envs, 15, self.record_num, dtype=torch.float, device=self.device, requires_grad=False)
         self.evaluate_index = torch.zeros(self.num_envs, dtype=torch.long, device=self.device, requires_grad=False)
         self.stop_resample = False
         self.record_stop_state = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device, requires_grad=False)
-        self.save_interval = 500
+        self.save_interval = 100000
+        self.create_save_path = True
+        self.save_path = None
 
     def _resample_commands(self, env_ids):
         if self.stop_resample:
             self.record_stop_state[env_ids] = True
             if torch.all(self.record_stop_state):
-                self.save_evaluate_table("final")
+                self.save_evaluate_table("final_" + str(self.visited_count))
                 self.pbar.finish()
                 sys.exit()
             self.record_index[env_ids] = -1
@@ -597,8 +641,11 @@ class A1GaitEvaluate(A1Env):
         else:
             if self.visited_count // (self.save_interval + 5000):
                 self.save_evaluate_table("latest_" + str(self.visited_count))
-                self.save_interval += 500
+                self.save_interval += 100000
+
+            if self.visited_count > self.visited_count_last:
                 self.pbar.update(self.visited_count + 1)
+            self.visited_count_last = self.visited_count
 
             num = len(env_ids)
             remain_num = self.total_command_num - self.visited_count
@@ -614,12 +661,11 @@ class A1GaitEvaluate(A1Env):
                     self.record_index[ids] = -1
                     self.record_command_buf[ids] = torch.tensor([0.0, 0.3, 0.5, 0.5, 0.0, 0.5], dtype=torch.float, device=self.device, requires_grad=False)
             else:
-                visited_count_last = self.visited_count
                 self.visited_count += num
-                self.record_index[env_ids] = self.table_index[visited_count_last:self.visited_count]
-                self.record_command_buf[env_ids] = self.command_evaluate_table[visited_count_last:self.visited_count, :6]
+                self.record_index[env_ids] = self.table_index[self.visited_count_last:self.visited_count]
+                self.record_command_buf[env_ids] = self.command_evaluate_table[self.visited_count_last:self.visited_count, :6]
 
-        self.record_evaluate_buf[env_ids] = 0.0
+        self.record_evaluate_buf[env_ids, :, :] = 0.0
         self.evaluate_index[env_ids] = 0
         self.vel_commands[env_ids, 0] = self.record_command_buf[env_ids, 0].clone()
         self.vel_commands[env_ids, 1] = 0.
@@ -628,20 +674,42 @@ class A1GaitEvaluate(A1Env):
         self.gait_commands[env_ids, 5] = 0.0
 
     def save_evaluate_table(self, file_name):
-        os.makedirs("gait_evaluate_table2", exist_ok=True)
-        torch.save(self.command_evaluate_table, "gait_evaluate_table2/"+file_name+".pt")
+        if self.create_save_path:
+            self.save_path = os.path.join('gait_evaluate_table', 'gait_evaluate_table' + '_{date:%Y-%m-%d_%H-%M-%S}'.format(date=datetime.now()))
+            os.makedirs(self.save_path, exist_ok=True)
+            print(f"save path: {self.save_path}")
+            self.create_save_path = False
+        file_path = os.path.join(self.save_path, file_name+'.pt')
+        torch.save(self.command_evaluate_table, file_path)
 
     def _update_pre_state(self):
         super()._update_pre_state()
-        env_ids = (self.progress_buf >= 4500).nonzero(as_tuple=False).flatten()
-        self.record_evaluate_buf[env_ids, 0] += self.root_states[env_ids, 2]
-        self.record_evaluate_buf[env_ids, 1] += self.base_lin_vel[env_ids, 0]
+        env_ids = (self.progress_buf >= 3500).nonzero(as_tuple=False).flatten()
+        record_count_ids = self.progress_buf[env_ids] - 3500
+        self.record_evaluate_buf[env_ids, :3, record_count_ids] = self.base_lin_vel[env_ids]
+        self.record_evaluate_buf[env_ids, 3:6, record_count_ids] = self.base_ang_vel[env_ids]
+        self.record_evaluate_buf[env_ids, 6:9, record_count_ids] = self.euler_xyz[env_ids]
+        self.record_evaluate_buf[env_ids, 9, record_count_ids] = self.root_states[env_ids, 2]
+        self.record_evaluate_buf[env_ids, 10:12, record_count_ids] = self.root_states[env_ids, :2]
+
         power_mech = self.torques[env_ids] * self.dof_vel[env_ids]
         power_total = power_mech.clone() + 0.26 * self.torques[env_ids] * self.torques[env_ids]
         power_mech = torch.clip(power_mech, min=0., max=None)
         power_total = torch.clip(power_total, min=0., max=None)
-        self.record_evaluate_buf[env_ids, 2] += torch.sum(power_mech, dim=-1)
-        self.record_evaluate_buf[env_ids, 3] += torch.sum(power_total, dim=-1)
+        self.record_evaluate_buf[env_ids, 12, record_count_ids] = torch.sum(power_mech, dim=-1)
+        self.record_evaluate_buf[env_ids, 13, record_count_ids] = torch.sum(power_total, dim=-1)
+        self.record_evaluate_buf[env_ids, 14, record_count_ids] = torch.max(self.feet_force[env_ids], dim=-1).values
+
+        self.evaluate_index[env_ids] += 1
+
+        # self.record_evaluate_buf[env_ids, 0] += self.root_states[env_ids, 2]
+        # self.record_evaluate_buf[env_ids, 1] += self.base_lin_vel[env_ids, 0]
+        # power_mech = self.torques[env_ids] * self.dof_vel[env_ids]
+        # power_total = power_mech.clone() + 0.26 * self.torques[env_ids] * self.torques[env_ids]
+        # power_mech = torch.clip(power_mech, min=0., max=None)
+        # power_total = torch.clip(power_total, min=0., max=None)
+        # self.record_evaluate_buf[env_ids, 2] += torch.sum(power_mech, dim=-1)
+        # self.record_evaluate_buf[env_ids, 3] += torch.sum(power_total, dim=-1)
 
     def _set_progress_bar(self):
         widgets = ['Progress: ', progressbar.Percentage(), ' ', progressbar.Bar('#'), ' ', progressbar.Timer(), ' ',
@@ -656,14 +724,25 @@ class A1GaitEvaluate(A1Env):
 
         not_stopped = torch.where(self.record_stop_state, torch.zeros_like(self.record_stop_state), torch.ones_like(self.record_stop_state))
         env_ids = (self.timeout_buf & not_stopped).nonzero(as_tuple=False).flatten()
-        self.record_evaluate_buf[env_ids] *= self.sim_dt
+        # self.record_evaluate_buf[env_ids] *= self.sim_dt
         table_index = self.record_index[env_ids]
-        self.command_evaluate_table[table_index, -4:] = self.record_evaluate_buf[env_ids].clone()
+        self.command_evaluate_table[table_index, -35:-26] = torch.mean(self.record_evaluate_buf[env_ids, :9], dim=-1)
+        self.command_evaluate_table[table_index, -26:-17] = torch.std(self.record_evaluate_buf[env_ids, :9], dim=-1)
+        bias = self.record_evaluate_buf[env_ids, :9].clone()
+        bias[:, 0, :] -= self.command_evaluate_table[table_index, 0].unsqueeze(-1)
+        self.command_evaluate_table[table_index, -17:-8] = torch.max(torch.abs(bias), dim=-1).values
+        self.command_evaluate_table[table_index, -8] = torch.mean(self.record_evaluate_buf[env_ids, 9], dim=-1)
+        self.command_evaluate_table[table_index, -7] = torch.std(self.record_evaluate_buf[env_ids, 9], dim=-1)
+        self.command_evaluate_table[table_index, -6] = torch.max(torch.abs(self.record_evaluate_buf[env_ids, 9] - 0.3), dim=-1).values
+        target_x = self.env_origins[env_ids, 0] + self.command_evaluate_table[table_index, 0] * 10.0  # 10 seconds
+        self.command_evaluate_table[table_index, -5] = self.record_evaluate_buf[env_ids, 10, -1] - target_x
+        self.command_evaluate_table[table_index, -4] = self.record_evaluate_buf[env_ids, 11, -1]
+        self.command_evaluate_table[table_index, -3] = torch.mean(self.record_evaluate_buf[env_ids, 12], dim=-1)
+        self.command_evaluate_table[table_index, -2] = torch.mean(self.record_evaluate_buf[env_ids, 13], dim=-1)
+        self.command_evaluate_table[table_index, -1] = torch.max(torch.abs(self.record_evaluate_buf[env_ids, 14]), dim=-1).values
 
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         self.reset_idx(env_ids)
-
-
 
 
 def permutations(tensor_list):
