@@ -39,6 +39,7 @@ class MotionPlanningInterface:
                                                 requires_grad=False)  # [h_FL, h_FR, h_RL, h_RR, phase_FL, phase_FR, phase_RL, phase_RR]
 
     def get_motion_command(self):
+        # print(self.gait_period_offset)
         return self.motion_planning_cmd.clone()
 
     def generate_motion_command(self):
@@ -108,6 +109,17 @@ class MotionPlanningInterface:
             self.body_linear_velocity[:, 2] = 0
             self.body_angular_velocity[:, :2] = 0
             self.body_angular_velocity[:, 2] = body_vel_x_y_wz[:, 2].clone()
+
+    def update_body_vel_x_y_wz(self, body_vel_x_y_wz: Union[torch.Tensor, None] = None):
+        if body_vel_x_y_wz is not None:
+            self.body_linear_velocity[:, :2] = body_vel_x_y_wz[:, :2].clone()
+            self.body_linear_velocity[:, 2] = 0
+            self.body_angular_velocity[:, :2] = 0
+            self.body_angular_velocity[:, 2] = body_vel_x_y_wz[:, 2].clone()
+
+    def update_body_height_offset(self, body_height_offset: Union[torch.Tensor, None] = None):
+        if body_height_offset is not None:
+            self.body_height_offset[:] = body_height_offset.clone()
 
     def update_des_feet_pos_rel_hip(self, des_feet_pos_rel_hip: torch.Tensor):
         self.des_feet_pos_rel_hip = des_feet_pos_rel_hip.clone()
