@@ -35,7 +35,7 @@ num_subscenes: 14 # Splits the simulation into N physics scenes and runs each on
 # test - if set, run policy in inference mode (requires setting checkpoint to load)
 test: False
 # used to set checkpoint path
-checkpoint: ''
+checkpoint: 'runs/A1Dynamics_2024-03-27_12-13-56/nn/last_A1Dynamics_ep_2800_rew_40.89293.pth'
 # used to initialize the actor net
 actor_init: ''#'runs/A1_2023-10-09_17-39-45/nn/A1.pth'
 # set sigma when restoring network

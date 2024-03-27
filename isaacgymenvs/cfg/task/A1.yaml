@@ -28,6 +28,7 @@ env:
     defaultDofDriveMode: 4 # see GymDofDriveModeFlags (0 is none, 1 is pos tgt, 2 is vel tgt, 4 effort)
     useForceSensor: False # wsh_annotation: use force sensors to acquire feet forces or not
     hip_position_rel_body: [ 0.1805, 0.1308, 0.0, 0.1805, -0.1308, 0.0, -0.1805, 0.1308, 0.0, -0.1805, -0.1308, 0.0 ]
+    body_half_length: 0.1805
 
   # threshold
   contactForceThreshold: 0.5
@@ -97,13 +98,13 @@ env:
     terminalReward: 0 # 0.0
     linearVelocityXYRewardScale: 1.5 # 1.5
     linearVelocityZRewardScale: -1.0 # -1.0
-    angularVelocityXYRewardScale: -0.05 # -0.05
-    angularVelocityZRewardScale: 0.5 # 0.5
-    orientationRewardScale: -1. # -1.0
+    angularVelocityXYRewardScale: -0.2 # -0.05
+    angularVelocityZRewardScale: 1.0 # 0.5
+    orientationRewardScale: -0.005 # -1.0
     torquesRewardScale: -1.0e-5 # -1.0e-5
     deltaTorquesRewardScale: -1.0e-7 # -1.0e-7
     jointAccRewardScale: -2.5e-7 # -2.5e-7
-    baseHeightRewardScale: -0. # -0.0
+    baseHeightRewardScale: -5. # -0.0
     feetAirTimeRewardScale: 0.0 # 0.0
     kneeCollisionRewardScale: -10. # -10.0
     fallenOverRewardScale: -0.0 # -0.0
@@ -127,7 +128,7 @@ env:
     gaitPhaseShapeScale: 0. # -0.002
     # imitation
     imitationTorque: 0.
-    imitationJointPos: -0.4
+    imitationJointPos: -0.0  # -0.4
     imitationJointVel: 0.
     # feet contact regulating
     feetContactRegulate: -0.5
@@ -335,7 +336,7 @@ env:
     restitutionRange: [ 0.0, 0.5 ]
     armatureRange: [0.0, 0.01]
     pushRobots: true
-    pushInterval_s: [7., 9.] # [7., 11.]
+    pushInterval_s: [3., 4.] # [7., 9.]
     randomPushRanges:
       velocity: [ -1., 1. ]
 
@@ -353,8 +354,8 @@ env:
       yaw: [ -1., 1. ]    # min max [rad/s]
 
     randomCommandGaitRanges:
-      period: [0.24, 0.52]
-      duty: [0.3, 0.7]
+      period: [0.3, 0.5] # [0.24, 0.52]
+      duty: [0.4, 0.5] # [0.3, 0.7]
       offset: [0.0, 1.0]
     randomCommandHeightRanges: [0.2, 0.36]
 

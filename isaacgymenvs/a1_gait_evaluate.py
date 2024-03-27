@@ -15,12 +15,12 @@ import time
 from datetime import datetime
 import progressbar
 
-NUM_ENVS = 6
+NUM_ENVS = 1
 HEADLESS = False
 USE_GPU = True
 SIM_DT = 0.002
-DECIMATION = 5
-MAX_EPISODE_LEN_S = 10.0
+DECIMATION = 10
+MAX_EPISODE_LEN_S = 20.0
 SUB_STEPS = 1
 ASSERT_PATH = "/home/wsh/Documents/pyProjects/IsaacGymEnvs/assets/urdf/a1/urdf/a1_old.urdf"
 BASE_NAME = 'trunk'
@@ -32,6 +32,8 @@ DEFAULT_DOF_POS = [0.01, 0.7954, -1.5908, -0.01, 0.7954, -1.5908, 0.01, 0.7954, 
 SPACING = 3.0
 VIEWER_POS_INIT = [-3, -3., 3.]
 VIEWER_LOOKAT_INIT = [1., 1., 0.]
+PUSH_FLAG = False
+PUSH_INTERVAL_S = 3.0
 
 
 class A1Env:
@@ -42,6 +44,9 @@ class A1Env:
         self.sim_dt = SIM_DT
         self.dt = self.sim_dt * self.decimation
         self.max_episode_length = int(MAX_EPISODE_LEN_S / self.dt + 0.5)
+
+        self.push_flag = PUSH_FLAG
+        self.push_interval = int(PUSH_INTERVAL_S / self.dt + 0.5)
 
         # optimization flags for pytorch JIT
         torch._C._jit_set_profiling_mode(False)
@@ -71,11 +76,11 @@ class A1Env:
         if self.common_step_counter % 1 == 0:
             self.render()
 
-        torques, tau_ff_mpc, q_des, qd_des = self._cal_torque()
+        torques_est, tau_ff_mpc, q_des, qd_des = self._cal_torque()
 
         for i in range(self.decimation):
             # torques, _, _, _ = self._cal_torque()
-            torques = self._cal_pd(tau_ff_mpc, q_des, qd_des)
+            torques = self._cal_pd(tau_ff_mpc, q_des, qd_des, kp=20.0, kd=0.5)
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
             self.torques[:] = torques.view(self.torques.shape)
             self.gym.simulate(self.sim)
@@ -83,16 +88,27 @@ class A1Env:
                 self.gym.fetch_results(self.sim, True)
             self._update_pre_state()
 
+            if i < self.decimation - 1:
+                _, _, _, _ = self._cal_torque()
+
         self.post_physics_step()
 
     def post_physics_step(self):
         self.progress_buf[:] += 1
         self.common_step_counter += 1
 
+        if self.push_flag and self.common_step_counter % self.push_interval == 0:  ### wsh_annotation: self.push_interval > 0
+            self.push_robots()
+
+        # print('base linear velocity_x: ', self.base_lin_vel[0, 0])
+        # print('base linear velocity_y: ', self.base_lin_vel[0, 1])
+        print('base linear velocity_w: ', self.base_ang_vel[0, 2])
+
         self.check_termination()
 
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
-        self.reset_idx(env_ids)
+        if len(env_ids) > 0:
+            self.reset_idx(env_ids)
 
     def check_termination(self):
         self.timeout_buf[:] = torch.where(self.progress_buf > self.max_episode_length - 1,
@@ -127,7 +143,14 @@ class A1Env:
         v_max /= 1.0
         tau_max = 33.5 * 1.0
         k = -3.953886
-        torques = torch.clip(tau_ff_mpc + kp * (q_des - self.dof_pos) + kd * (qd_des - self.dof_vel), -tau_max, tau_max)
+
+        kp_vec = torch.zeros_like(q_des)
+        kd_vec = torch.zeros_like(qd_des)
+        kp_vec[:] = kp
+        kd_vec[:] = kd
+        # kp_vec[:, [0, 3, 6, 9]] = 20.
+        # kd_vec[:, [0, 3, 6, 9]] = 0.5
+        torques = torch.clip(tau_ff_mpc + kp_vec * (q_des - self.dof_pos) + kd_vec * (qd_des - self.dof_vel), -tau_max, tau_max)
         tmp_max_torque = torch.clip(k * (self.dof_vel - v_max), 0, tau_max)
         tmp_min_torque = torch.clip(k * (self.dof_vel + v_max), -tau_max, 0)
         torques[:] = torch.where(self.dof_vel > tau_max / k + v_max,
@@ -135,6 +158,11 @@ class A1Env:
         torques[:] = torch.where(self.dof_vel < -(tau_max / k + v_max),
                                  torch.clip(torques, tmp_min_torque, tau_max * torch.ones_like(torques)), torques)
         return torques
+
+    def push_robots(self):
+        self.root_states[:, 7:9] = torch_rand_float(-1., 1., (self.num_envs, 2), device=self.device)  # lin vel x/y
+        self.root_states[:, 7:9] = torch.tensor([0., 1.5], device=self.device)
+        self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.root_states))
 
     def _update_pre_state(self):
         self.gym.refresh_dof_state_tensor(self.sim)
@@ -269,6 +297,17 @@ class A1Env:
             robot_handle = self.gym.create_actor(env_handle, robot_asset, start_pose, "a1", i, 1, 0)
             self.gym.set_actor_dof_properties(env_handle, robot_handle, dof_props)
 
+            rigid_body_prop = self.gym.get_actor_rigid_body_properties(env_handle, robot_handle)
+            # for bp in range(len(rigid_body_prop)):
+            #     rigid_body_prop[bp].mass = 0.01
+            # rigid_body_prop[0].mass = 12
+            # rigid_body_prop[0].com = gymapi.Vec3(0.05, 0.0, 0.0)
+            # rigid_body_prop[0].inertia.x = gymapi.Vec3(0.1, 0., 0.)
+            # rigid_body_prop[0].inertia.y = gymapi.Vec3(0., 0.1, 0.)
+            # rigid_body_prop[0].inertia.z = gymapi.Vec3(0., 0., 0.2)
+            self.gym.set_actor_rigid_body_properties(env_handle, robot_handle, rigid_body_prop, recomputeInertia=False)
+            body_prop = self.gym.get_actor_rigid_body_properties(env_handle, robot_handle)
+
             self.envs.append(env_handle)
             self.actor_handles.append(robot_handle)
         print("envs created!")
@@ -390,11 +429,25 @@ class A1Env:
                                                      gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
 
     def _resample_commands(self, env_ids):
-        self.vel_commands[env_ids, 0] = 1.
+        self.vel_commands[env_ids, 0] = 1
         self.vel_commands[env_ids, 1] = 0.
         self.vel_commands[env_ids, 3] = 0.
 
-        self.gait_commands[env_ids] = torch.tensor([0.6, 0.5, 0.5, 0.5, 0.0, 0.0], dtype=torch.float, device=self.device, requires_grad=False)
+        walk1 = [0.5, 0.75, 0.5, 0.25, 0.75, 0.]
+        walk2 = [0.3, 0.75, 0.5, 0.25, 0.75, 0.]
+        tort1 = [0.5, 0.5, 0.5, 0.5, 0., 0.]
+        tort2 = [0.3, 0.5, 0.5, 0.5, 0., 0.]
+        flying_tort1 = [0.5, 0.3, 0.5, 0.5, 0., 0.]
+        flying_tort2 = [0.3, 0.3, 0.5, 0.5, 0., 0.]
+        pace1 = [0.25, 0.6, 0.5, 0., 0.5, 0.]
+        pace2 = [0.3, 0.5, 0.5, 0., 0.5, 0.]
+        pronk1 = [0.3, 0.3, 0., 0., 0., 0.]
+        pronk2 = [0.3, 0.5, 0., 0., 0., 0.]
+        # bound1 = [0.3, 0.5, 0., 0.5, 0.5, 0.5]
+        # bound2 = [0.3, 0.4, 0., 0.5, 0.5, 0.5]
+
+
+        self.gait_commands[env_ids] = torch.tensor(tort1, dtype=torch.float, device=self.device, requires_grad=False)
 
     def _update_motion_gait(self, env_ids):
         gait_period_offset = (self.gait_commands[:, 0] - 0.5).unsqueeze(-1).repeat(1, 4)
@@ -410,6 +463,7 @@ class A1Env:
         forward = quat_apply(self.base_quat, self.forward_vec)
         heading = torch.atan2(forward[:, 1], forward[:, 0])
         self.vel_commands[:, 2] = torch.clip(0.8 * wrap_to_pi(self.vel_commands[:, 3] - heading), -1., 1.)
+        # self.vel_commands[:, 2] = 1.
         vel_commands = self.vel_commands[:, :3].clone()
         self.motion_planning_interface.update_body_planning(True, None, None, None, None, vel_commands)
 
