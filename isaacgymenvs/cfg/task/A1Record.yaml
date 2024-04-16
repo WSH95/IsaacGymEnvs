@@ -298,7 +298,7 @@ env:
       velocity: [ -0.5, 0.5 ]
 
     # episode length in seconds
-    episodeLength_s: 30
+    episodeLength_s: 3000
 
     commands_change_s: [5., 7.] # not change in an episode if greater than episodeLength_s
     gait_commands_change_s: [7., 11.] # [3., 5.]

@@ -134,7 +134,7 @@ class CustomPlayer(players.PpoPlayerContinuous):
                         if print_game_res:
                             print(f'reward: {cur_rewards_done:.1f} steps: {cur_steps_done:.1} w: {game_res:.1}')
                         else:
-                            print(f'reward: {cur_rewards_done:.1f} steps: {cur_steps_done:.1f}')
+                            print(f'reward: {cur_rewards_done:.3f} steps: {cur_steps_done:.1f}')
 
                     sum_game_res += game_res
                     if batch_size // self.num_agents == 1 or games_played >= n_games:

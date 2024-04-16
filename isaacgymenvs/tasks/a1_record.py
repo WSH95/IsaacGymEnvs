@@ -1660,7 +1660,7 @@ class A1Record(VecTask):
         # self.commands[env_ids, 3] = torch_rand_float(self.scheduled_command_yaw_range[0], self.scheduled_command_yaw_range[1],
         #                                              (len(env_ids), 1), device=self.device).squeeze()
         # self.commands[env_ids, 2] = self.commands[env_ids, 3].clone()
-        self.commands[:, 0] = 0.8
+        self.commands[:, 0] = 1.0
         self.commands[:, 1] = 0.0
         self.commands[:, 3] = 0.0
         # if self.common_step_counter % 120 > 60:

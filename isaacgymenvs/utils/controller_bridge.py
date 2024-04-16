@@ -41,21 +41,25 @@ class VecControllerBridge:
         self.motion_order[48:52] = self.contact_order + 48  # feet_lift_height_bias->height
         self.motion_order[52:56] = self.contact_order + 52  # feet_lift_height_bias->phase_bias
 
+        self.force_ff_numpy = np.zeros((self.num_controllers, 12), dtype=np.float32)
         self.torque_numpy = np.zeros((self.num_controllers, 12), dtype=np.float32)
         self.tau_ff_numpy = np.zeros((self.num_controllers, 12), dtype=np.float32)
         self.q_des_numpy = np.zeros((self.num_controllers, 12), dtype=np.float32)
         self.qd_des_numpy = np.zeros((self.num_controllers, 12), dtype=np.float32)
         # set ndarray contiguous
+        self.force_ff_numpy = np.ascontiguousarray(self.force_ff_numpy)
         self.torque_numpy = np.ascontiguousarray(self.torque_numpy)
         self.tau_ff_numpy = np.ascontiguousarray(self.tau_ff_numpy)
         self.q_des_numpy = np.ascontiguousarray(self.q_des_numpy)
         self.qd_des_numpy = np.ascontiguousarray(self.qd_des_numpy)
         # set ndarray to be writeable
+        self.force_ff_numpy.setflags(write=1)
         self.torque_numpy.setflags(write=1)
         self.tau_ff_numpy.setflags(write=1)
         self.q_des_numpy.setflags(write=1)
         self.qd_des_numpy.setflags(write=1)
 
+        self.force_ff = torch.zeros(self.num_controllers, 12, dtype=torch.float, device=self.device, requires_grad=False)
         self.torque = torch.zeros(self.num_controllers, 12, dtype=torch.float, device=self.device, requires_grad=False)
         self.tau_ff = torch.zeros(self.num_controllers, 12, dtype=torch.float, device=self.device, requires_grad=False)
         self.q_des = torch.zeros(self.num_controllers, 12, dtype=torch.float, device=self.device, requires_grad=False)
@@ -103,11 +107,12 @@ class VecControllerBridge:
         dof_pos_cpu[:, 4:] *= -1.
         dof_vel_cpu[:, 4:] *= -1.
 
-        self.controller.getMotorCommands2(self.torque_numpy, self.tau_ff_numpy, self.q_des_numpy, self.qd_des_numpy,
+        self.controller.getMotorCommands2(self.force_ff_numpy, self.torque_numpy, self.tau_ff_numpy, self.q_des_numpy, self.qd_des_numpy,
                                           reset_env_ids_cpu, base_quat_cpu, base_ang_vel_cpu, base_lin_acc_cpu,
                                           dof_pos_cpu, dof_vel_cpu, contact_state_cpu, motion_planning_cmd_cpu)
 
         # print("py_torque_numpy", torque_numpy)
+        self.force_ff[:] = torch.from_numpy(self.force_ff_numpy).float().to(self.device)[:, self.torque_order]
         self.torque[:] = torch.from_numpy(self.torque_numpy).float().to(self.device)[:, self.torque_order]
         self.torque[:, self.torque_inverse_index] *= -1.
         # print("py_torque", self.torque)
@@ -130,7 +135,7 @@ class VecControllerBridge:
         # print("convert time1: ", (t2 - t1) / 1.e6, " ms")
         # print("py_torque_numpy", torque_numpy)
         # print("py_torque", torque)
-        return self.torque.clone(), self.tau_ff.clone(), self.q_des.clone(), self.qd_des.clone()
+        return self.force_ff.clone(), self.torque.clone(), self.tau_ff.clone(), self.q_des.clone(), self.qd_des.clone()
 
 
 class SingleControllerBridge:

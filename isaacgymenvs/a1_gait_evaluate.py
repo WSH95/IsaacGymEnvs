@@ -15,12 +15,12 @@ import time
 from datetime import datetime
 import progressbar
 
-NUM_ENVS = 1
+NUM_ENVS = 16
 HEADLESS = False
 USE_GPU = True
 SIM_DT = 0.002
 DECIMATION = 10
-MAX_EPISODE_LEN_S = 20.0
+MAX_EPISODE_LEN_S = 200.0
 SUB_STEPS = 1
 ASSERT_PATH = "/home/wsh/Documents/pyProjects/IsaacGymEnvs/assets/urdf/a1/urdf/a1_old.urdf"
 BASE_NAME = 'trunk'
@@ -76,11 +76,12 @@ class A1Env:
         if self.common_step_counter % 1 == 0:
             self.render()
 
-        torques_est, tau_ff_mpc, q_des, qd_des = self._cal_torque()
+        force_ff_mpc, torques_est, tau_ff_mpc, q_des, qd_des = self._cal_torque()
 
         for i in range(self.decimation):
             # torques, _, _, _ = self._cal_torque()
-            torques = self._cal_pd(tau_ff_mpc, q_des, qd_des, kp=20.0, kd=0.5)
+            torques = tau_ff_mpc
+            # torques = self._cal_pd(tau_ff_mpc, q_des, qd_des, kp=20.0, kd=0.5)
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
             self.torques[:] = torques.view(self.torques.shape)
             self.gym.simulate(self.sim)
@@ -89,7 +90,7 @@ class A1Env:
             self._update_pre_state()
 
             if i < self.decimation - 1:
-                _, _, _, _ = self._cal_torque()
+                _, _, tau_ff_mpc, _, _ = self._cal_torque()
 
         self.post_physics_step()
 
@@ -128,7 +129,7 @@ class A1Env:
         self._update_motion_vel()
         self.motion_planning_interface.generate_motion_command()
         motion_commands = self.motion_planning_interface.get_motion_command()
-        torques, tau_ff_mpc, q_des, qd_des = self.mit_controller.step_run(self.controller_reset_buf, self.base_quat,
+        force_ff, torques, tau_ff_mpc, q_des, qd_des = self.mit_controller.step_run(self.controller_reset_buf, self.base_quat,
                                                                           self.base_ang_vel, self.base_lin_acc,
                                                                           self.dof_pos, self.dof_vel,
                                                                           self.feet_contact_state,
@@ -136,7 +137,7 @@ class A1Env:
         self.motion_planning_interface.change_gait_planning(False)
         self.motion_planning_interface.change_body_planning(False)
 
-        return torques, tau_ff_mpc, q_des, qd_des
+        return force_ff, torques, tau_ff_mpc, q_des, qd_des
 
     def _cal_pd(self, tau_ff_mpc, q_des, qd_des, kp=25., kd=1.):
         v_max = 20.0233
@@ -285,7 +286,7 @@ class A1Env:
             rigid_shape_props[s].friction = 1.0
         for j in range(self.num_dof):
             dof_props['driveMode'][j] = gymapi.DOF_MODE_EFFORT
-            dof_props['armature'][j] = 0.01
+            # dof_props['armature'][j] = 0.0
 
         print("Creating env...")
         for i in tqdm(range(self.num_envs)):
@@ -429,7 +430,7 @@ class A1Env:
                                                      gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
 
     def _resample_commands(self, env_ids):
-        self.vel_commands[env_ids, 0] = 1
+        self.vel_commands[env_ids, 0] = 1.
         self.vel_commands[env_ids, 1] = 0.
         self.vel_commands[env_ids, 3] = 0.
 
@@ -447,7 +448,7 @@ class A1Env:
         # bound2 = [0.3, 0.4, 0., 0.5, 0.5, 0.5]
 
 
-        self.gait_commands[env_ids] = torch.tensor(tort1, dtype=torch.float, device=self.device, requires_grad=False)
+        self.gait_commands[env_ids] = torch.tensor(tort2, dtype=torch.float, device=self.device, requires_grad=False)
 
     def _update_motion_gait(self, env_ids):
         gait_period_offset = (self.gait_commands[:, 0] - 0.5).unsqueeze(-1).repeat(1, 4)
