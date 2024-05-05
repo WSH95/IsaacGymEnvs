@@ -11,7 +11,7 @@ env:
   numObservations: 75  #191  #99 # 77 # 418 # 48 # 52 # 163
   numActions: 12
   envSpacing: 3.  # [m]
-  enableDebugVis: false
+  enableDebugVis: true
 
 #  clipObservations: 5.0
   clipActions: 4.8 # 4.0  # 4.8
@@ -142,14 +142,15 @@ env:
 
     rewards:
       weights:
-        qr: 0.5
-        contact_schedule: 0.3
-        kine_imitation: 0.1
-        dyna_imitation: 0.1
-        smooth: 0.1
+        qr: 1.0
+        contact_schedule: 1.
+        kine_imitation: 1.
+        dyna_imitation: 1.
+        smooth: 1.
       scales:
-        bodyTrajTrackingWeight: [ 2.0, 2.0, 20.0, 0.5, 0.5, 10.0, 0.2, 0.2, 0.2, 0.0, 0.0, 0.3 ]  # lin_pos_xyz, ang_pos_xyz, lin_vel_xyz, ang_vel_xyz
-        torqueWeight: 4.0e-5
+#        bodyTrajTrackingWeight: [ 2.0, 2.0, 20.0, 0.5, 0.5, 3.0, 0.2, 0.2, 0.2, 0.05, 0.05, 0.3 ]  # lin_pos_xyz, ang_pos_xyz, lin_vel_xyz, ang_vel_xyz
+        bodyTrajTrackingWeight: [ 0.0, 0.0, 100.0, 16.0, 16.0, 0.0, 1.0, 1.0, 1.0, 0.2, 0.2, 1.0 ]
+        torqueWeight: 1.0e-5
         swing_schedule: 0.02
         stance_schedule: 0.8
         feet_pos_xy: 50.0
@@ -157,11 +158,11 @@ env:
         feet_vel_xy: 0.36
         feet_vel_z: 0.0
         dof_bias: 0.04
-        feet_lin_momentum: 0.05
-        feet_ang_momentum: 1.
-        whole_lin_momentum: 0.05
-        whole_ang_momentum: 1.
-        action_rate: 0.0016
+        feet_lin_momentum: 0.04
+        feet_ang_momentum: 1.0
+        whole_lin_momentum: 0.02
+        whole_ang_momentum: 1.0
+        action_rate: 0.04
         collision: 10.0
         stumble: 1.0
 
@@ -176,6 +177,7 @@ env:
         rollAngle: 0
         pitchAngle: 0
 #        projectedGravity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
+#        body_traj_err: 0
 
 #        dofPosition: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
         dofPositionRelInit: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
@@ -344,6 +346,11 @@ env:
           bufferLength: 1
           scale: 1.0
           noise: 0.0
+        body_traj_err:
+          size: 12
+          bufferLength: 1
+          scale: 1.0
+          noise: 0.01
 
     # normalization
     linearVelocityScale: 2.0
@@ -370,20 +377,20 @@ env:
     pushRobots: true
     pushInterval_s: [7., 9.] # [7., 9.]
     randomPushRanges:
-      velocity: [ -1.0, 1.0 ]
+      velocity: [ -0.5, 0.5 ]
 
     # episode length in seconds
     episodeLength_s: 30
 
     commands_change_s: [5., 7.] # not change in an episode if greater than episodeLength_s
-    gait_commands_change_s: [7., 11.]  #[6., 8.] #[7., 11.]
+    gait_commands_change_s: [70., 110.]  #[6., 8.] #[7., 11.]
     height_commands_change_s: [97., 911.]
 
     randomCommandVelocityRanges:
       # train
-      linear_x: [ -0.5, 1.2 ] # min max [m/s]
-      linear_y: [ -0.5, 0.5 ]   # min max [m/s]
-      yaw: [ -1., 1. ]    # min max [rad/s]
+      linear_x: [ -0.5, 0.5 ] # min max [m/s]
+      linear_y: [ -0., 0. ]   # min max [m/s]
+      yaw: [ -0.5, 0.5 ]    # min max [rad/s]
 
     randomCommandGaitRanges:
       period: [0.3, 0.5] # [0.24, 0.52]

@@ -15,7 +15,7 @@ import time
 from datetime import datetime
 import progressbar
 
-NUM_ENVS = 16
+NUM_ENVS = 1
 HEADLESS = False
 USE_GPU = True
 SIM_DT = 0.002
@@ -82,6 +82,9 @@ class A1Env:
             # torques, _, _, _ = self._cal_torque()
             torques = tau_ff_mpc
             # torques = self._cal_pd(tau_ff_mpc, q_des, qd_des, kp=20.0, kd=0.5)
+            # print('torques: ', torques)
+            # print('torques_est: ', torques_est)
+            # print("-------------------------------------------------------------------------------------")
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
             self.torques[:] = torques.view(self.torques.shape)
             self.gym.simulate(self.sim)
@@ -90,7 +93,7 @@ class A1Env:
             self._update_pre_state()
 
             if i < self.decimation - 1:
-                _, _, tau_ff_mpc, _, _ = self._cal_torque()
+                _, torques_est, tau_ff_mpc, _, _ = self._cal_torque()
 
         self.post_physics_step()
 
@@ -101,9 +104,9 @@ class A1Env:
         if self.push_flag and self.common_step_counter % self.push_interval == 0:  ### wsh_annotation: self.push_interval > 0
             self.push_robots()
 
-        # print('base linear velocity_x: ', self.base_lin_vel[0, 0])
+        print('base linear velocity_x: ', self.base_lin_vel[0, 0])
         # print('base linear velocity_y: ', self.base_lin_vel[0, 1])
-        print('base linear velocity_w: ', self.base_ang_vel[0, 2])
+        # print('base linear velocity_w: ', self.base_ang_vel[0, 2])
 
         self.check_termination()
 
@@ -448,7 +451,7 @@ class A1Env:
         # bound2 = [0.3, 0.4, 0., 0.5, 0.5, 0.5]
 
 
-        self.gait_commands[env_ids] = torch.tensor(tort2, dtype=torch.float, device=self.device, requires_grad=False)
+        self.gait_commands[env_ids] = torch.tensor(walk2, dtype=torch.float, device=self.device, requires_grad=False)
 
     def _update_motion_gait(self, env_ids):
         gait_period_offset = (self.gait_commands[:, 0] - 0.5).unsqueeze(-1).repeat(1, 4)

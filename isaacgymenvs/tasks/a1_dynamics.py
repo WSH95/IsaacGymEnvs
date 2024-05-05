@@ -253,12 +253,14 @@ class A1Dynamics(VecTask):
         net_contact_forces = self.gym.acquire_net_contact_force_tensor(self.sim)
         sensor_forces = self.gym.acquire_force_sensor_tensor(self.sim)
         actor_rigid_body_state = self.gym.acquire_rigid_body_state_tensor(self.sim)
+        # mass_matrix_tensor = self.gym.acquire_mass_matrix_tensor(self.sim, "a1")
 
         self.gym.refresh_dof_state_tensor(self.sim)
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_net_contact_force_tensor(self.sim)
         self.gym.refresh_force_sensor_tensor(self.sim)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
+        # self.gym.refresh_mass_matrix_tensors(self.sim)
 
         # create some wrapper tensors for different slices
         self.root_states = gymtorch.wrap_tensor(actor_root_state)
@@ -294,6 +296,8 @@ class A1Dynamics(VecTask):
         self.body_half_length = self.cfg["env"]["urdfAsset"]["body_half_length"]
         self.robot_mass = self.cfg["env"]["urdfAsset"]["robot_mass"]
         self.robot_weight = 9.8 * self.robot_mass
+
+        # self.mass_matrix = gymtorch.wrap_tensor(mass_matrix_tensor)
 
         self.Kp = torch.zeros_like(self.dof_pos)
         self.Kd = torch.zeros_like(self.dof_vel)
@@ -495,6 +499,12 @@ class A1Dynamics(VecTask):
         self.base_lin_acc = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device,
                                         requires_grad=False) - self.gravity_acc
 
+        # extra force or torque
+        self.extra_force = torch.zeros(self.num_envs, self.num_bodies, 3, dtype=torch.float, device=self.device,
+                                       requires_grad=False)
+        self.extra_torque = torch.zeros(self.num_envs, self.num_bodies, 3, dtype=torch.float, device=self.device,
+                                        requires_grad=False)
+
         # controller reset buf
         self.controller_reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
 
@@ -535,7 +545,8 @@ class A1Dynamics(VecTask):
                                   "vx_mean": self.vx_mean,
                                   "feet_phase_sincos": self.feet_phase_sincos,
                                   "ref_phase_norm_sincos_current": self.ref_phase_norm_sincos_current,
-                                  "ref_phase_norm_sincos_next": self.ref_phase_norm_sincos_next}
+                                  "ref_phase_norm_sincos_next": self.ref_phase_norm_sincos_next,
+                                  "body_traj_err": self.body_traj_error}
 
         self.obs_combination = self.cfg["env"]["learn"]["observationConfig"]["combination"]
         for key in self.obs_combination.keys():
@@ -592,16 +603,17 @@ class A1Dynamics(VecTask):
         self.kinematic_feet_pos = torch.zeros(self.num_envs, 4, 3, dtype=torch.float, device=self.device, requires_grad=False)
 
         self.gait_list = [[0.5, 0.75, 0.5, 0.25, 0.75, 0.],  # 0
-                     [0.3, 0.75, 0.5, 0.25, 0.75, 0.],  # 1
-                     [0.5, 0.5, 0.5, 0.5, 0., 0.],  # 2
-                     [0.3, 0.5, 0.5, 0.5, 0., 0.],  # 3
-                     [0.5, 0.3, 0.5, 0.5, 0., 0.],  # 4
-                     [0.3, 0.3, 0.5, 0.5, 0., 0.],  # 5
-                     [0.25, 0.6, 0.5, 0., 0.5, 0.],  # 6
-                     [0.3, 0.5, 0.5, 0., 0.5, 0.],  # 7
-                     [0.3, 0.3, 0., 0., 0., 0.],  # 8
-                     [0.3, 0.5, 0., 0., 0., 0.],  # 9
-                     [0.3, 0.5, 0., 0.5, 0.5, 0.5]]  # 10
+                          [0.3, 0.75, 0.5, 0.25, 0.75, 0.],  # 1
+                          [0.5, 0.5, 0.5, 0.5, 0., 0.],  # 2
+                          [0.3, 0.5, 0.5, 0.5, 0., 0.],  # 3
+                          [0.5, 0.3, 0.5, 0.5, 0., 0.],  # 4
+                          [0.3, 0.3, 0.5, 0.5, 0., 0.],  # 5
+                          [0.25, 0.6, 0.5, 0., 0.5, 0.],  # 6
+                          [0.3, 0.5, 0.5, 0., 0.5, 0.],  # 7
+                          [0.3, 0.3, 0., 0., 0., 0.],  # 8
+                          [0.3, 0.5, 0., 0., 0., 0.],  # 9
+                          [0.3, 0.5, 0., 0.5, 0.5, 0.5],  # 10
+                          [1.0, 0.5, 0.5, 0.5, 0., 0.]]  # 11
         self.gait_tensor = torch.tensor(self.gait_list, device=self.device)
         self.num_gait = len(self.gait_list)
         self.gait_id = torch.zeros(self.num_envs, dtype=torch.long, device=self.device, requires_grad=False)
@@ -791,8 +803,10 @@ class A1Dynamics(VecTask):
                                             device=self.device)
         self.terrain_types = torch.randint(0, self.cfg["env"]["terrain"]["numTerrains"], (self.num_envs,),
                                            device=self.device)
+        self.env_index_plane = torch.where(self.terrain_types > -1.0)[0].to(torch.long)
         self.target_points = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False)
         if self.custom_origins:
+            self.env_index_plane = torch.where(self.terrain_types < 2.0)[0].to(torch.long)
             self.terrain_origins = torch.from_numpy(self.terrain.env_origins).to(self.device).to(torch.float)
             self.target_points_list = torch.from_numpy(self.terrain.env_target_points).to(self.device).to(torch.float)
             self.reached_target = torch.zeros(self.num_envs, dtype=torch.long, device=self.device, requires_grad=False)
@@ -834,11 +848,12 @@ class A1Dynamics(VecTask):
                 # dof_props['stiffness'][i] = self.cfg["env"]["control"]["stiffness"] #self.Kp
                 # dof_props['damping'][i] = self.cfg["env"]["control"]["damping"] #self.Kd
                 dof_props['armature'][j] = self.armature_coeffs[i]  # 0.01
-                # dof_props['armature'][j] = 0.0
+                # dof_props['armature'][j] = 0.01
 
             self.gym.set_asset_rigid_shape_properties(a1_asset, rigid_shape_prop)
             a1_handle = self.gym.create_actor(env_handle, a1_asset, start_pose, "a1", i, 1, 0)
             self.gym.set_actor_dof_properties(env_handle, a1_handle, dof_props)
+            # tmp_dof_props = self.gym.get_actor_dof_properties(env_handle, a1_handle)
 
             rigid_body_prop = self.gym.get_actor_rigid_body_properties(env_handle, a1_handle)
             if self.randomize_base_mass:
@@ -846,7 +861,7 @@ class A1Dynamics(VecTask):
             if self.randomize_base_com:
                 rigid_body_prop[0].com += gymapi.Vec3(self.added_com[i][0], self.added_com[i][1], self.added_com[i][2])
             if self.randomize_base_mass or self.randomize_base_com:
-                # rigid_body_prop[0].mass = 12.
+                # rigid_body_prop[0].mass = 10.
                 # rigid_body_prop[0].com = gymapi.Vec3(0.05, 0.0, 0.0)
                 self.gym.set_actor_rigid_body_properties(env_handle, a1_handle, rigid_body_prop, recomputeInertia=True)
 
@@ -928,6 +943,8 @@ class A1Dynamics(VecTask):
 
         self.record_commands()
 
+        self.update_ref_body_trajectory()
+
         if self.add_terrain_obs:
             self.measured_heights = self.get_heights()
             self.terrain_height[:] = torch.clip(self.root_states[:, 2].unsqueeze(1) - 0.5 - self.measured_heights, -1, 1.)
@@ -987,21 +1004,25 @@ class A1Dynamics(VecTask):
         rew_traj_pos_z = -err_traj_pos_z
         rew_traj_ang_xy = -err_traj_ang_xy
         rew_traj_ang_z = -err_traj_ang_z
-        rew_traj_lin_vel_xy = -err_traj_lin_vel_xy
+        # rew_traj_lin_vel_xy = -err_traj_lin_vel_xy
+        rew_traj_lin_vel_xy = torch.exp(-err_traj_lin_vel_xy / 0.25) * 1.5
         rew_traj_lin_vel_z = -err_traj_lin_vel_z
         rew_traj_ang_vel_xy = -err_traj_ang_vel_xy
-        rew_traj_ang_vel_z = -err_traj_ang_vel_z
-        rew_traj_sum = -err_traj_sum
+        # rew_traj_ang_vel_z = -err_traj_ang_vel_z
+        rew_traj_ang_vel_z = torch.exp(-err_traj_ang_vel_z / 0.25) * 1.0
+        rew_traj_sum = rew_traj_pos_xy + rew_traj_pos_z + rew_traj_ang_xy + rew_traj_ang_z + rew_traj_lin_vel_xy + rew_traj_lin_vel_z + rew_traj_ang_vel_xy + rew_traj_ang_vel_z
         # torque reward
         err_torque = torch.sum(torch.square(self.torques), dim=1)
         rew_torque = -err_torque * self.torque_weight
         # qr reward
         rew_qr = (rew_traj_sum + rew_torque) * self.reward_weights["qr"]
+        # print(f"err_traj_lin_vel_xy: {err_traj_lin_vel_xy[0]}")
 
     # contact schedule reward
         # swing schedule reward
         feet_force_norm = torch.norm(self.feet_force.view(self.num_envs, 4, 3), p=2, dim=-1)
         err_swing_schedule = torch.square(feet_force_norm)
+        err_swing_schedule = torch.where((0.1 < err_swing_schedule) & (err_swing_schedule < 5.0), 5.0, err_swing_schedule)
         rew_swing_schedule = torch.sum((1. - self.ref_phase_C_des) * torch.exp(-err_swing_schedule * self.reward_scales["swing_schedule"]), dim=1) / 4.0
         # stance schedule reward
         feet_vel_xy_world_norm = torch.norm(self.feet_lin_vel_world.view(self.num_envs, 4, 3)[..., :2], p=2, dim=-1)
@@ -1015,19 +1036,23 @@ class A1Dynamics(VecTask):
         tmp_err_feet_pos_xy_each = torch.norm(self.feet_position_moved_hip_horizon_frame.view(self.num_envs, 4, 3)[..., :2] - self.ref_foot_pos_xy_horizon, p=2, dim=-1)
         err_feet_pos_xy = (self.gait_commands_count > 1) * torch.sum(self.foot_pos_track_weight * torch.square(tmp_err_feet_pos_xy_each), dim=-1)
         rew_feet_pos_xy = torch.exp(-err_feet_pos_xy * self.reward_scales["feet_pos_xy"])
+        # rew_feet_pos_xy = -err_feet_pos_xy * self.reward_scales["feet_pos_xy"]
         err_feet_pos_z = torch.zeros_like(err_feet_pos_xy)
         rew_feet_pos_z = torch.zeros_like(rew_feet_pos_xy)
         # feet vel tracking reward
         tmp_err_feet_vel_xy_each = torch.norm(self.feet_velocity_hip_horizon_frame.view(self.num_envs, 4, 3)[..., :2] - self.ref_foot_vel_xy_horizon, p=2, dim=-1)
         err_feet_vel_xy = (self.gait_commands_count > 1) * torch.sum(self.foot_pos_track_weight * torch.square(tmp_err_feet_vel_xy_each), dim=-1)
         rew_feet_vel_xy = torch.exp(-err_feet_vel_xy * self.reward_scales["feet_vel_xy"])
+        # rew_feet_vel_xy = -err_feet_vel_xy * self.reward_scales["feet_vel_xy"]
         err_feet_vel_z = torch.zeros_like(err_feet_vel_xy)
         rew_feet_vel_z = torch.zeros_like(rew_feet_vel_xy)
         # dof bias reward
         err_dof_bias = torch.sum(torch.square(self.dof_pos - self.default_dof_pos), dim=1)
         rew_dof_bias = torch.exp(-err_dof_bias * self.reward_scales["dof_bias"])
+        # rew_dof_bias = -err_dof_bias * self.reward_scales["dof_bias"]
         # kinematic imitation reward
-        rew_kine_imitation = rew_feet_pos_xy * rew_feet_vel_xy * rew_dof_bias * self.reward_weights["kine_imitation"]
+        rew_kine_imitation = (rew_feet_pos_xy * rew_feet_vel_xy * rew_dof_bias - 1.0) * self.reward_weights["kine_imitation"]
+        # rew_kine_imitation = (rew_feet_pos_xy + rew_feet_vel_xy + rew_dof_bias) * self.reward_weights["kine_imitation"]
 
     # dynamic imitation reward
         tmp_err_feet_lin_momentum_each = self.ref_feet_lin_momentum - self.feet_lin_momentum
@@ -1045,22 +1070,26 @@ class A1Dynamics(VecTask):
         err_whole_ang_momentum = torch.sum(torch.square(torch.sum(tmp_err_feet_ang_momentum_each.reshape(self.num_envs, 4, 3), dim=1)), dim=1)
         rew_whole_ang_momentum = torch.exp(-err_whole_ang_momentum * self.reward_scales["whole_ang_momentum"])
         # dynamic imitation reward
-        rew_dyna_imitation = rew_feet_lin_momentum * rew_feet_ang_momentum * rew_whole_lin_momentum * rew_whole_ang_momentum * self.reward_weights["dyna_imitation"]
+        rew_dyna_imitation = (rew_feet_lin_momentum * rew_feet_ang_momentum * rew_whole_lin_momentum * rew_whole_ang_momentum - 1.0) * self.reward_weights["dyna_imitation"]
 
     # smoothness reward
         # action rate reward
         err_action_rate = torch.sum(torch.square(self.actions - self.last_actions), dim=1)
         rew_action_rate = torch.exp(-err_action_rate * self.reward_scales["action_rate"])
+        # rew_action_rate = -err_action_rate * self.reward_scales["action_rate"]
         # collision reward
         knee_contact = torch.norm(self.contact_forces[:, self.penalize_contacts_indices, :], dim=2) > self.contact_force_threshold
         err_knee_collision = torch.sum(knee_contact, dim=1)
         rew_collision = torch.exp(-err_knee_collision * self.reward_scales["collision"])
+        # rew_collision = -err_knee_collision * self.reward_scales["collision"]
         # stumble reward
         stumble = (torch.norm(self.contact_forces[:, self.feet_indices, :2], dim=2) > 5.) * (torch.abs(self.contact_forces[:, self.feet_indices, 2]) < self.contact_force_threshold)
         err_stumble = torch.any(stumble, dim=1).float()
         rew_stumble = torch.exp(-err_stumble * self.reward_scales["stumble"])
+        # rew_stumble = -err_stumble * self.reward_scales["stumble"]
         # smoothness reward
-        rew_smooth = rew_action_rate * rew_collision * rew_stumble * self.reward_weights["smooth"]
+        rew_smooth = (rew_action_rate * rew_collision * rew_stumble - 1.0) * self.reward_weights["smooth"]
+        # rew_smooth = (rew_action_rate + rew_collision + rew_stumble) * self.reward_weights["smooth"]
 
     # calculate total rewards
         self.rew_buf[:] = (rew_qr + rew_contact_schedule + rew_kine_imitation + rew_dyna_imitation + rew_smooth) * self.dt
@@ -1114,8 +1143,8 @@ class A1Dynamics(VecTask):
         self.rew_error["traj_sum"] += err_traj_sum
         self.rew_error["torque"] += err_torque
 
-        self.rew_error["swing_schedule"] += rew_swing_schedule
-        self.rew_error["stance_schedule"] += rew_stance_schedule
+        self.rew_error["swing_schedule"] += -rew_swing_schedule
+        self.rew_error["stance_schedule"] += -rew_stance_schedule
 
         self.rew_error["feet_pos_xy"] += err_feet_pos_xy
         self.rew_error["feet_pos_z"] += err_feet_pos_z
@@ -1395,8 +1424,8 @@ class A1Dynamics(VecTask):
         # for i in range(num_feet):
         #     tmp_vel_horizon_frame[:, i, :] = quat_rotate(self.base_quat_horizon, tmp_vel[:, i, :])
         # ref_foothold_xy = tmp_vel_horizon_frame[..., :2] * (self.gait_periods * self.gait_commands[:, 1]).unsqueeze(-1).unsqueeze(-1) * 0.5
-        tmp_vel_horizon_frame = self.calculate_vel_horizon_frame(self.base_lin_vel, self.base_ang_vel, self.base_lin_vel_command, self.base_ang_vel_command, self.base_quat_horizon, vel_weight=0.8)
-        self.calculate_ref_foot_xy(self.ref_phase_norm_current, tmp_vel_horizon_frame[..., :2], self.gait_periods, self.gait_duty)
+        # tmp_vel_horizon_frame = self.calculate_vel_horizon_frame(self.base_lin_vel, self.base_ang_vel, self.base_lin_vel_command, self.base_ang_vel_command, self.base_quat_horizon, vel_weight=0.8)
+        # self.calculate_ref_foot_xy(self.ref_phase_norm_current, tmp_vel_horizon_frame[..., :2], self.gait_periods, self.gait_duty)
         # print(f"vxy: {tmp_vel_horizon_frame[0, 0]}")
         # print(f"ref_foot_pos: {self.ref_foot_pos_xy_body[0, 0, 0]}")
         # print(f"foot_pos_track_weight: {self.foot_pos_track_weight[0, 0]}")
@@ -1913,22 +1942,22 @@ class A1Dynamics(VecTask):
         # print(f"duty: {duty}")
         # print(f"vx_mean: {self.vx_mean}")
 
-        self.motion_planning_interface.update_gait_planning(True, gait_period_offset, gait_duty_cycle_offset, gait_phase_offset, None)
-        self.motion_planning_interface.update_body_planning(True, None, self.body_orientation_commands, None, None, vel_commands)
-        # self.motion_planning_interface.update_feet_mid_bias_xy(self.feet_mid_bias_xy)
-        # self.motion_planning_interface.update_feet_lift_height(self.feet_lift_height_bias)
-        # self.motion_planning_interface.update_des_feet_pos_rel_hip(self.des_feet_pos_rel_hip)
-        self.motion_planning_interface.generate_motion_command()
-        # ------------------------------------------------------------------------------------------------------------
-
-        self.force_ff_mpc[:], torques_est, tau_ff_mpc, q_des, qd_des = self.mit_controller.step_run(self.controller_reset_buf, self.base_quat,
-                                                                          self.base_ang_vel, self.base_lin_acc,
-                                                                          self.dof_pos, self.dof_vel,
-                                                                          self.feet_contact_state,
-                                                                          self.motion_planning_interface.get_motion_command())  # self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state
-        self.motion_planning_interface.change_gait_planning(False)
-        self.motion_planning_interface.change_body_planning(False)
+        # self.motion_planning_interface.update_gait_planning(True, gait_period_offset, gait_duty_cycle_offset, gait_phase_offset, None)
+        # self.motion_planning_interface.update_body_planning(True, None, self.body_orientation_commands, None, None, vel_commands)
+        # # self.motion_planning_interface.update_feet_mid_bias_xy(self.feet_mid_bias_xy)
+        # # self.motion_planning_interface.update_feet_lift_height(self.feet_lift_height_bias)
+        # # self.motion_planning_interface.update_des_feet_pos_rel_hip(self.des_feet_pos_rel_hip)
+        # self.motion_planning_interface.generate_motion_command()
+        # # ------------------------------------------------------------------------------------------------------------
         #
+        # self.force_ff_mpc[:], torques_est, tau_ff_mpc, q_des, qd_des = self.mit_controller.step_run(self.controller_reset_buf, self.base_quat,
+        #                                                                   self.base_ang_vel, self.base_lin_acc,
+        #                                                                   self.dof_pos, self.dof_vel,
+        #                                                                   self.feet_contact_state,
+        #                                                                   self.motion_planning_interface.get_motion_command())  # self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state
+        # self.motion_planning_interface.change_gait_planning(False)
+        # self.motion_planning_interface.change_body_planning(False)
+
         # # self.ref_dof_pos[:] = (tau_ff_mpc + self.Kp * q_des + self.Kd * qd_des) / self.Kp
         #
         # tau_ff_in_use = tau_ff_mpc
@@ -1970,6 +1999,7 @@ class A1Dynamics(VecTask):
             self.ref_feet_force_mpc[:] = -(self.ref_phase_contact_state.reshape(self.num_envs, 4, 1) * self.force_ff_mpc.reshape(self.num_envs, 4, 3)).reshape(self.num_envs, 12)
 
             self.est_feet_force[:] = quat_apply(self.base_quat.repeat(1, 4), self.est_feet_force)
+            self.est_feet_force[:, [2, 5, 8, 11]] = self.feet_force[:, [2, 5, 8, 11]]
             self.ref_feet_force_mpc[:] = quat_apply(self.base_quat.repeat(1, 4), self.ref_feet_force_mpc)
 
             # torques, tau_ff_mpc, q_des, qd_des = self.mit_controller.step_run(self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state, self.motion_planning_interface.get_motion_command())  # self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state
@@ -2003,6 +2033,8 @@ class A1Dynamics(VecTask):
             # torques = torch.zeros_like(torques)
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
             self.torques[:] = torques.view(self.torques.shape)
+            self.gym.apply_rigid_body_force_tensors(self.sim, gymtorch.unwrap_tensor(self.extra_force),
+                                                    gymtorch.unwrap_tensor(self.extra_torque), gymapi.ENV_SPACE)
             # self.torques = torques.view(self.torques.shape)
             # if i % 5 == 0 and self.force_render:
             #     self.render()
@@ -2018,13 +2050,13 @@ class A1Dynamics(VecTask):
 
             # self.torques_square_accumulated += torch.square(torques)
 
-            self.force_ff_mpc[:], _, tau_ff_mpc, _, _ = self.mit_controller.step_run(self.controller_reset_buf, self.base_quat,
-                                                                          self.base_ang_vel, self.base_lin_acc,
-                                                                          self.dof_pos, self.dof_vel,
-                                                                          self.feet_contact_state,
-                                                                          self.motion_planning_interface.get_motion_command())
-            self.motion_planning_interface.change_gait_planning(False)
-            self.motion_planning_interface.change_body_planning(False)
+            # self.force_ff_mpc[:], torques_est, tau_ff_mpc, q_des, qd_des = self.mit_controller.step_run(self.controller_reset_buf, self.base_quat,
+            #                                                                self.base_ang_vel, self.base_lin_acc,
+            #                                                                self.dof_pos, self.dof_vel,
+            #                                                                self.feet_contact_state,
+            #                                                                self.motion_planning_interface.get_motion_command())
+            # self.motion_planning_interface.change_gait_planning(False)
+            # self.motion_planning_interface.change_body_planning(False)
 
         # tau_ff_in_use = torch.matmul(self.jacobian.transpose(-2, -1), self.ref_feet_force.reshape(self.num_envs, 4, 3, 1)).squeeze(-1).reshape(self.num_envs, 12)
 
@@ -2035,6 +2067,7 @@ class A1Dynamics(VecTask):
         self.ref_feet_force_mpc[:] = -(self.ref_phase_contact_state.reshape(self.num_envs, 4, 1) * self.force_ff_mpc.reshape(self.num_envs, 4, 3)).reshape(self.num_envs, 12)
 
         self.est_feet_force[:] = quat_apply(self.base_quat.repeat(1, 4), self.est_feet_force)
+        self.est_feet_force[:, [2, 5, 8, 11]] = self.feet_force[:, [2, 5, 8, 11]]
         self.ref_feet_force_mpc[:] = quat_apply(self.base_quat.repeat(1, 4), self.ref_feet_force_mpc)
         # print(f"est_feet_force: {self.est_feet_force[0]}")
         # print(f"ref_feet_force_mpc: {self.ref_feet_force_mpc[0]}")
@@ -2069,6 +2102,8 @@ class A1Dynamics(VecTask):
         # torques = torch.zeros_like(torques)
         self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
         self.torques[:] = torques.view(self.torques.shape)
+        self.gym.apply_rigid_body_force_tensors(self.sim, gymtorch.unwrap_tensor(self.extra_force),
+                                                gymtorch.unwrap_tensor(self.extra_torque), gymapi.ENV_SPACE)
 
         # self.record_state()
         # self.torques_square_accumulated += torch.square(torques)
@@ -2144,7 +2179,9 @@ class A1Dynamics(VecTask):
             self.gym.clear_lines(self.viewer)
             self.gym.refresh_rigid_body_state_tensor(self.sim)
             sphere_geom = gymutil.WireframeSphereGeometry(0.02, 4, 4, None, color=(1, 1, 0))
-            sphere_geom_target = gymutil.WireframeSphereGeometry(0.1, 32, 32, None, color=(0, 0, 1))
+            sphere_geom_target = gymutil.WireframeSphereGeometry(0.05, 32, 32, None, color=(0, 0, 1))
+            sphere_geom_foot_contact = gymutil.WireframeSphereGeometry(0.03, 32, 32, None, color=(0, 1, 0))
+            sphere_geom_foot_contact_err = gymutil.WireframeSphereGeometry(0.036, 16, 16, None, color=(0, 0, 1), color2=(1, 0, 0))
 
             if not self.add_terrain_obs:
                 self.measured_heights = self.get_heights()
@@ -2152,6 +2189,13 @@ class A1Dynamics(VecTask):
             if self.cfg["env"]["terrain"]["terrainType"] == 'plane':
                 self.target_points[:] = self.root_states[:, :3]
             target_points_z = self.get_heights_xy(self.target_points[:, :2])
+
+            # feet contact indices
+            contact_state_err = torch.abs(self.feet_contact_state - self.ref_phase_contact_state)
+            # feet_contact_indices = torch.where(self.feet_contact_state > 0.5)
+            # feet_contact_err_indices = torch.where(contact_state_err > 0.5)
+            # position_contact = (self.feet_position_world.reshape(self.num_envs, 4, 3))[feet_contact_indices]
+            # position_contact_err = self.feet_position_world.reshape(self.num_envs, 4, 3)[feet_contact_err_indices]
 
             for i in range(self.num_envs):
                 base_pos = (self.root_states[i, :3])#.cpu().numpy()
@@ -2172,6 +2216,19 @@ class A1Dynamics(VecTask):
                 # target_point_z = self.height_samples[pts[0], pts[1]] * self.terrain.vertical_scale
                 pose = gymapi.Transform(gymapi.Vec3(self.target_points[i, 0], self.target_points[i, 1], target_points_z[i]), r=None)
                 gymutil.draw_lines(sphere_geom_target, self.gym, self.viewer, self.envs[i], pose)
+
+                # draw feet contact
+                feet_contact_indices = torch.where(self.feet_contact_state[i] > 0.5)
+                feet_contact_err_indices = torch.where(contact_state_err[i] > 0.5)
+                position_contact = (self.feet_position_world[i].reshape(4, 3))[feet_contact_indices]
+                position_contact_err = self.feet_position_world[i].reshape(4, 3)[feet_contact_err_indices]
+                for k in range(position_contact.shape[0]):
+                    pose = gymapi.Transform(gymapi.Vec3(position_contact[k, 0], position_contact[k, 1], position_contact[k, 2]), r=None)
+                    gymutil.draw_lines(sphere_geom_foot_contact, self.gym, self.viewer, self.envs[i], pose)
+                for k in range(position_contact_err.shape[0]):
+                    pose = gymapi.Transform(gymapi.Vec3(position_contact_err[k, 0], position_contact_err[k, 1], position_contact_err[k, 2]), r=None)
+                    gymutil.draw_lines(sphere_geom_foot_contact_err, self.gym, self.viewer, self.envs[i], pose)
+
 
     def init_height_points(self):
         # 1mx1.6m rectangle (without center line)
@@ -2326,6 +2383,7 @@ class A1Dynamics(VecTask):
         self.gym.refresh_net_contact_force_tensor(self.sim)
         self.gym.refresh_force_sensor_tensor(self.sim)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
+        # self.gym.refresh_mass_matrix_tensors(self.sim)
 
         self.simulate_counter += 1
 
@@ -2411,6 +2469,7 @@ class A1Dynamics(VecTask):
         # print("last vel:", self.last_base_lin_vel_rel_world)
         # print(f"body_height_real: {(self.root_states[0, 2] - 0.3) * 1000} mm")
         # print(f"base_lin_vel: {self.base_lin_vel[0]}")
+        # print(f"base_ang_vel: {self.base_ang_vel[0]}")
         # print(f"torque: {self.torques[0]}")
         # print(f"joint_pos: {self.dof_pos[0]}")
         # print(f"joint_vel: {self.dof_vel[0]}")
@@ -2443,7 +2502,7 @@ class A1Dynamics(VecTask):
             self.base_quat_horizon[env_ids] = self.horizon_quat_in_base[env_ids].clone()
             self.base_quat_horizon[env_ids, :3] = -self.base_quat_horizon[env_ids, :3].clone()
 
-    def update_body_trajectory(self):
+    def update_ref_body_trajectory(self):
         self.vel_commands_body[:, :2] = self.commands[:, :2]
         self.vel_commands_body[:, 2] = 0.0
         self.vel_commands_body[:, 3:5] = 0.0
@@ -2451,33 +2510,65 @@ class A1Dynamics(VecTask):
 
         self.vel_commands_world[:, :3] = quat_rotate(self.base_quat, self.vel_commands_body[:, :3])
         self.vel_commands_world[:, 3:] = quat_rotate(self.base_quat, self.vel_commands_body[:, 3:])
-        self.calculate_Rw_matrix(self.ref_body_trajectory[:, 4:6], self.Rw_matrix)
+        self.vel_commands_world[self.env_index_plane, 3:] = self.vel_commands_body[self.env_index_plane, 3:]
+        self.calculate_Rw_matrix(self.euler_xyz[:, 1:3], self.Rw_matrix)
         self.delta_theta[:] = torch.matmul(self.Rw_matrix, self.vel_commands_world[:, 3:].unsqueeze(-1)).squeeze(-1)
+        self.delta_theta[self.env_index_plane, :] = self.vel_commands_world[self.env_index_plane, 3:]
+        yaw_angle_turned = self.dt * self.delta_theta[:, 2]
 
-        self.ref_body_trajectory[:, :2] += self.dt * self.vel_commands_world[:, :2]  # controller world frame
+        vxy_normalized = normalize(self.vel_commands_world[:, :2])
+        yaw_turn_indices = torch.where(torch.abs(self.delta_theta[:, 2]) > 1.0e-4)[0].to(torch.long)
+        not_yaw_turn_indices = torch.where(torch.abs(self.delta_theta[:, 2]) <= 1.0e-4)[0].to(torch.long)
+        self.ref_body_trajectory[yaw_turn_indices, :2] += vec_rotate_z(vxy_normalized[yaw_turn_indices], yaw_angle_turned[yaw_turn_indices] / 2.0) * (2 * torch.sin(yaw_angle_turned[yaw_turn_indices] / 2.0) * self.vel_commands_world[yaw_turn_indices, :2].norm(p=2, dim=-1) / self.delta_theta[yaw_turn_indices, 2]).unsqueeze(-1)
+        self.ref_body_trajectory[not_yaw_turn_indices, :2] += self.dt * self.vel_commands_world[not_yaw_turn_indices, :2]  # controller world frame
+        # self.ref_body_trajectory[:, :2] += self.act_body_trajectory[:, :2]  # controller world frame
         self.ref_body_trajectory[:, 2] = self.height_commands[:, 0] + self.ground_height_current  # controller world frame
-        self.ref_body_trajectory[:, 3:5] = 0.0  # controller world frame
-        env_ids = (self.delta_theta[:, 2] > 1.0e-3).nonzero(as_tuple=False).flatten()
-        self.ref_body_trajectory[env_ids, 5] = self.euler_xyz[env_ids, 2] + self.dt * self.delta_theta[env_ids, 2]  # controller world frame
-        self.ref_body_trajectory[:, 6:8] = self.vel_commands_world[:, :2]  # controller world frame
-        self.ref_body_trajectory[:, 8] = 0.0  # body frame
-        self.ref_body_trajectory[:, 9:12] = self.vel_commands_world[:, 3:]  # controller world frame
 
+        self.ref_body_trajectory[:, 3:5] = self.euler_xyz[:, :2]  # controller world frame
+        self.ref_body_trajectory[self.env_index_plane, 3:5] = 0.0
+        # env_ids = (self.delta_theta[:, 2] > 1.0e-3).nonzero(as_tuple=False).flatten()
+        # self.ref_body_trajectory[env_ids, 5] += self.dt * self.delta_theta[env_ids, 2]  # controller world frame
+        # env_ids = (torch.any(self.delta_theta, dim=1) > 1.0e-3).nonzero(as_tuple=False).flatten()
+        self.ref_body_trajectory[:, 5] = wrap_to_pi(self.ref_body_trajectory[:, 5] + yaw_angle_turned)  # controller horizon frame
+
+        self.ref_body_trajectory[:, 6:8] = vec_rotate_z(self.vel_commands_world[:, :2], yaw_angle_turned)  # controller world frame
+        self.ref_body_trajectory[:, 8] = 0.0  # body frame
+        self.ref_body_trajectory[:, 9:12] = self.vel_commands_body[:, 3:]  # body frame
+
+        # print(f"vel_commands_world: {self.vel_commands_world[3, :2]}")
+        # print(f"delta_theta: {self.delta_theta[0]}")
+        # print(f"yaw_rate_commands: {self.commands[0, 2]}")
+        # print(f"ref_body_trajectory: {self.ref_body_trajectory[3, 5]}")
+        # print(f"dt: {self.dt}")
+        # print(f"progress_buf: {self.progress_buf[:]}")
+
+    def update_body_trajectory(self):
         self.act_body_trajectory[:, :3] = self.root_states[:, :3] - self.init_position_bias_rel_world
         self.act_body_trajectory[:, 3:6] = self.euler_xyz.clone()
         self.act_body_trajectory[:, 6:8] = self.root_states[:, 7:9]
         self.act_body_trajectory[:, 8] = self.base_lin_vel[:, 2]
-        self.act_body_trajectory[:, 9:12] = self.root_states[:, 10:13]
+        self.act_body_trajectory[:, 9:12] = self.base_ang_vel.clone()  # body frame
 
         self.body_traj_error[:] = self.ref_body_trajectory - self.act_body_trajectory
+        self.body_traj_error[:, 5] = wrap_to_pi(self.body_traj_error[:, 5])
+        # self.ref_body_trajectory[:, :2] = self.act_body_trajectory[:, :2]
+        # self.ref_body_trajectory[:, 5] = self.act_body_trajectory[:, 5]
 
         xy_position_error_threshold = 0.1
         xy_position_error = torch.clip(self.ref_body_trajectory[:, :2] - self.act_body_trajectory[:, :2], -xy_position_error_threshold, xy_position_error_threshold)
         self.ref_body_trajectory[:, :2] = self.act_body_trajectory[:, :2] + xy_position_error
 
-        # print(f"body_traj_error: {self.body_traj_error[0, 5]}")
-        # print(f"ref_body_trajectory: {self.ref_body_trajectory[0, 3:6]}")
-        # print(f"act_body_trajectory: {self.act_body_trajectory[0]}")
+        yaw_angle_error_threshold = 0.1
+        yaw_angle_error = torch.clip(self.ref_body_trajectory[:, 5] - self.act_body_trajectory[:, 5], -yaw_angle_error_threshold, yaw_angle_error_threshold)
+        self.ref_body_trajectory[:, 5] = self.act_body_trajectory[:, 5] + yaw_angle_error
+
+        # self.body_traj_error[:] = self.ref_body_trajectory - self.act_body_trajectory
+
+        # print(f"act_body_trajectory: {self.act_body_trajectory[3, 5]}")
+        # idx = torch.where(self.body_traj_error[:, 5]>1.0)[0].to(torch.long)
+        # if len(idx):
+        #     print(f"body_traj_error: {self.body_traj_error[idx, 5]}")
+        #     print(f"wrapped_body_traj_error: {wrap_to_pi(self.body_traj_error[idx, 5])}")
 
     def modify_vel_command(self):
         env_ids = ((self.progress_buf > 0) & ((self.progress_buf == 25) | (self.progress_buf % self.commands_change_random_count == 0))).nonzero(as_tuple=False).flatten()
@@ -2503,14 +2594,15 @@ class A1Dynamics(VecTask):
         self.commands[env_ids_heading, 2] = self._heading_to_omega(heading)[env_ids_heading]
         # print(self.commands[0, 2])
 
+        # self.commands[env_ids, 2] = self.commands[env_ids, 3].clone()
 
 
-        # self.commands[:, 0] = 1.
+        # self.commands[:, 0] = 0.
         # self.commands[:, 1] = 0.
         # self.commands[:, 3] = 0.
         # self.commands[:, 2] = self._heading_to_omega(heading)
 
-        # self.commands[:, 2] = 0.
+        # self.commands[:, 2] = 1.
         # print(f"heading_vec: {forward[0]}")
         # print(f"heading: {heading[0]}")
         # print(f"target_vec: {self.target_pos_rel[0]}")
@@ -2594,7 +2686,7 @@ class A1Dynamics(VecTask):
         # self.gait_commands[env_ids, 4] = 0.5
 
         gait_list_ids = torch.randint(0, self.num_gait, (len(env_ids),))
-        # gait_list_ids[:] = 7
+        gait_list_ids[:] = 11
         self.gait_id[env_ids] = gait_list_ids.to(self.device).clone()
         self.gait_commands[env_ids, :] = self.gait_tensor[gait_list_ids].clone()
 
@@ -2854,7 +2946,7 @@ class A1Dynamics(VecTask):
         env_ids_init = (self.gait_commands_count == 0).nonzero(as_tuple=False).flatten()
         env_ids_running = (self.gait_commands_count > 0).nonzero(as_tuple=False).flatten()
 
-        self.ref_phase_current[env_ids_init] = torch.cat((self.gait_commands[env_ids_init, 5].unsqueeze(-1), self.gait_commands[env_ids_init, 2:5]+self.gait_commands[env_ids_init, 5].unsqueeze(-1)), dim=-1)[:, [1, 0, 3, 2]]  # [FR FL RR RL] -> [FL FR RL RR]
+        self.ref_phase_current[env_ids_init] = torch.cat((self.gait_commands[env_ids_init, 5].unsqueeze(-1), -self.gait_commands[env_ids_init, 2:5]+self.gait_commands[env_ids_init, 5].unsqueeze(-1)), dim=-1)[:, [1, 0, 3, 2]]  # [FR FL RR RL] -> [FL FR RL RR]
         self.ref_phase_current[env_ids_running] += self.ref_delta_phase[env_ids_running].unsqueeze(-1)
         # self.ref_phase_current[env_ids_running] += self.ref_delta_phase_sim_step[env_ids_running].unsqueeze(-1)
         self.ref_phase_current[:] %= 1.
@@ -3447,12 +3539,23 @@ class Terrain:
 #
 #
 @torch.jit.script
+def vec_rotate_z(vec_xy, angle):
+    shape = vec_xy.shape
+    vec_xy = vec_xy.reshape(-1, 2)
+    angle = angle.reshape(-1)
+    quat = torch.zeros(shape[0], 4, device=vec_xy.device)
+    quat[:, 2] = torch.sin(angle / 2)
+    quat[:, 3] = torch.cos(angle / 2)
+    vec = torch.stack([vec_xy[:, 0], vec_xy[:, 1], torch.zeros_like(vec_xy[:, 0])], dim=1)
+    vec_rotated = quat_apply(quat, vec)
+    return vec_rotated[:, :2].reshape(shape)
+
+@torch.jit.script
 def quat_apply_yaw(quat, vec):
     quat_yaw = quat.clone().view(-1, 4)
     quat_yaw[:, :2] = 0.
     quat_yaw = normalize(quat_yaw)
     return quat_apply(quat_yaw, vec)
-
 
 @torch.jit.script
 def wrap_to_pi(angles):

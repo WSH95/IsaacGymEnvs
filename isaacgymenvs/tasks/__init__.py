@@ -52,6 +52,7 @@ from .a1_test2 import A1Test2
 from .a1_record import A1Record
 from .a1_gait import A1Gait
 from .a1_dynamics import A1Dynamics
+from .a1_limited import A1Limited
 
 from .allegro_kuka.allegro_kuka_reorientation import AllegroKukaReorientation
 from .allegro_kuka.allegro_kuka_regrasping import AllegroKukaRegrasping
@@ -117,5 +118,6 @@ isaacgym_task_map = {
     "A1Test2": A1Test2,
     "A1Record": A1Record,
     "A1Gait": A1Gait,
-    "A1Dynamics": A1Dynamics
+    "A1Dynamics": A1Dynamics,
+    "A1Limited": A1Limited,
 }
