@@ -15,6 +15,7 @@ class ObservationBuffer:
                  noise: Union[float, List, ListConfig, None] = None):
         self.obs_raw_buffer = CircleBuffer(num_envs, single_data_shape, data_type, buffer_length, device)
         self.obs_noisy_scaled_buffer = CircleBuffer(num_envs, single_data_shape, data_type, buffer_length, device)
+        self.obs_scaled_buffer = CircleBuffer(num_envs, single_data_shape, data_type, buffer_length, device)
         self.scale = scale
         if isinstance(scale, (List, ListConfig)):
             self.scale = torch.tensor(scale, dtype=torch.float, device=device, requires_grad=False)
@@ -26,6 +27,7 @@ class ObservationBuffer:
 
     def reset_and_fill(self, data: torch.Tensor):
         self.obs_raw_buffer.reset_and_fill(data)
+        self.obs_scaled_buffer.reset_and_fill(data * self.scale)
         if self.noise is not None:
             self.obs_noisy_scaled_buffer.reset_and_fill((data + torch.randn_like(data) * self.noise) * self.scale)
         else:
@@ -33,6 +35,7 @@ class ObservationBuffer:
 
     def reset_and_fill_index(self, idx: Union[List, ListConfig, torch.Tensor], data: torch.Tensor):
         self.obs_raw_buffer.reset_and_fill_index(idx, data)
+        self.obs_scaled_buffer.reset_and_fill_index(idx, data * self.scale)
         if self.noise is not None:
             self.obs_noisy_scaled_buffer.reset_and_fill_index(idx, (data + torch.randn_like(data) * self.noise) * self.scale)
         else:
@@ -40,6 +43,7 @@ class ObservationBuffer:
 
     def record(self, data: torch.Tensor):
         self.obs_raw_buffer.record(data)
+        self.obs_scaled_buffer.record(data * self.scale)
         if self.noise is not None:
             self.obs_noisy_scaled_buffer.record((data + torch.randn_like(data) * self.noise) * self.scale)
         else:
@@ -51,14 +55,23 @@ class ObservationBuffer:
     def get_latest_data_raw(self):
         return self.obs_raw_buffer.get_latest_data()
 
+    def get_latest_data_scaled(self):
+        return self.obs_scaled_buffer.get_latest_data()
+
     def get_index_data(self, indices_from_back: Union[torch.Tensor, List, ListConfig, int]):
         return self.obs_noisy_scaled_buffer.get_index_data(indices_from_back)
 
     def get_index_data_raw(self, indices_from_back: Union[torch.Tensor, List, ListConfig, int]):
         return self.obs_raw_buffer.get_index_data(indices_from_back)
 
+    def get_index_data_scaled(self, indices_from_back: Union[torch.Tensor, List, ListConfig, int]):
+        return self.obs_scaled_buffer.get_index_data(indices_from_back)
+
     def get_len_data(self, length: int):
         return self.obs_noisy_scaled_buffer.get_len_data(length)
 
     def get_len_data_raw(self, length: int):
         return self.obs_raw_buffer.get_len_data(length)
+
+    def get_len_data_scaled(self, length: int):
+        return self.obs_scaled_buffer.get_len_data(length)

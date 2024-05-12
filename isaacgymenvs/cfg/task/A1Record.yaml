@@ -8,10 +8,10 @@ num_controller_threads: 26
 
 env:
   numEnvs: ${resolve_default:4096,${...num_envs}}
-  numObservations: 75  #191  #99 # 77 # 418 # 48 # 52 # 163
+  numObservations: 92  #191  #99 # 77 # 418 # 48 # 52 # 163
   numActions: 12
   envSpacing: 3.  # [m]
-  enableDebugVis: true
+  enableDebugVis: false
 
 #  clipObservations: 5.0
   clipActions: 4.8 # 4.0  # 4.8
@@ -39,7 +39,7 @@ env:
   xywVelocityCommandThreshold: [ 0.1, 0.05, 0.1 ] # [ 0.1, 0.05, 0.1 ]
 
   baseInitState:
-    pos: [ 0.0, 0.0, 0.302 ] # x,y,z [m] 0.28
+    pos: [ 0.0, 0.0, 0.32 ] # x,y,z [m] 0.28
     #    rot: [ 0.0, 0.0, 0.0, 1.0 ] # x,y,z,w [quat]
     rpy: [ 0.0, 0.0, 0.0 ] # roll, pitch, yaw [rad]
     vLinear: [ 0.0, 0.0, 0.0 ]  # x,y,z [m/s]
@@ -67,10 +67,10 @@ env:
     dynamicFriction: 1.  # [-]
     restitution: 0.0        # [-]
     # rough terrain only:
-    curriculum: true
+    curriculum: false
     maxInitMapLevel: 0
-    mapLength: 8. # 40.
-    mapWidth: 8. # 40.
+    mapLength: 20. # 40.
+    mapWidth: 20. # 40.
     numLevels: 10 # 10
     numTerrains: 20 # 20
     # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
@@ -80,7 +80,7 @@ env:
     numTerrainObservations: 140
     # contain terrain map in observation
     addTerrainObservation: false
-    useMultiprocess: false
+    useMultiprocess: true
     targetThreshold: 0.5
 
 
@@ -101,18 +101,18 @@ env:
     terminalReward: 0 # 0.0
     linearVelocityXYRewardScale: 1.5 # 1.5
     linearVelocityZRewardScale: -1.0 # -1.0
-    angularVelocityXYRewardScale: -0.2  # -0.2 # -0.05
-    angularVelocityZRewardScale: 1.0 # 0.5
-    orientationRewardScale: -0.005  #-0.005 # -1.0
+    angularVelocityXYRewardScale: -0.05  # -0.2 # -0.05
+    angularVelocityZRewardScale: 0.5 # 0.5
+    orientationRewardScale: -1.0  #-0.005 # -1.0
     torquesRewardScale: -1.0e-5  #-1.0e-5 # -1.0e-5
-    deltaTorquesRewardScale: -0.0e-7 # -1.0e-7
-    jointAccRewardScale: -0.0e-7 # -2.5e-7
-    baseHeightRewardScale: -1. # -0.0
+    deltaTorquesRewardScale: -1.0e-7 # -1.0e-7
+    jointAccRewardScale: -2.5e-7 # -2.5e-7
+    baseHeightRewardScale: -0.5 # -0.0
     feetAirTimeRewardScale: 0.0 # 0.0
     kneeCollisionRewardScale: -10. # -10.0
     fallenOverRewardScale: -0.0 # -0.0
     feetStumbleRewardScale: -1. #-1.0
-    actionRateRewardScale: -0.04 #-0.1
+    actionRateRewardScale: -0.1 #-0.1
     energyRewardScale: 0.0 # -0.0
     powerRewardScale: -0. # -0.0
     power_max_mean_each: -0 # -0.0
@@ -122,7 +122,7 @@ env:
     torque_max_mean_each: -0 # -0.0
     torque_max_mean_std: -0.0 # -0.0
     # cosmetics
-    hipRewardScale: -0. # -0.5
+    hipRewardScale: 0. # -0.5
     dofBiasRewardScale: -0.04 # -0.04
     #gait
     gaitTrackingScale: 0. # 3.0
@@ -138,7 +138,7 @@ env:
     imitationLinMomentum: -0.0
     imitationAngMomentum: -0.0
     # feet contact regulating
-    feetContactRegulate: -0.5  #-0.5
+    feetContactRegulate: 1.0  #-0.5
 
     rewards:
       weights:
@@ -174,10 +174,13 @@ env:
         commands: 0  #[9, 6, 3, 0] # size -> 3
         linearVelocity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
         angularVelocity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
-        rollAngle: 0
-        pitchAngle: 0
-#        projectedGravity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
+#        rollAngle: 0
+#        pitchAngle: 0
+        projectedGravity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
 #        body_traj_err: 0
+
+        motor_not_broken_flag: 0
+        leg_not_broken_flag: 0
 
 #        dofPosition: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
         dofPositionRelInit: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
@@ -191,7 +194,9 @@ env:
 #        feetPositionRelHip: 0
 #        feetLinVelRelHip: 0
         feetContactState: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 4
-        ref_phase_norm_sincos_current: [2, 1, 0]
+#        global_clock_phase_sin_cos: [2, 1, 0]
+#        ref_phase_norm_sincos_current: [2, 1, 0]
+        ref_phase_norm_sincos_leg_broken: [2, 1, 0]
 #        ref_phase_norm_sincos_next: 0
 #        heightMeasurement: 0
 #        armature_coeffs_real: 0
@@ -205,57 +210,68 @@ env:
           bufferLength: 5
           scale: 2.0
           noise: 0.1
+          during_sim_dt: true
         angularVelocity:
           size: 3
           bufferLength: 5
           scale: 0.25
           noise: 0.2
+          during_sim_dt: true
         projectedGravity:
           size: 3
           bufferLength: 5
           scale: 1.0
           noise: 0.05
+          during_sim_dt: true
         dofPosition:
           size: 12
           bufferLength: 5
           scale: 1.0
           noise: 0.01
+          during_sim_dt: true
         dofPositionRelInit:
           size: 12
-          bufferLength: 5
+          bufferLength: 60
           scale: 1.0
           noise: 0.01
+          during_sim_dt: true
         dofVelocity:
           size: 12
-          bufferLength: 5
+          bufferLength: 60
           scale: 0.05  # 0.05
           noise: 1.5
+          during_sim_dt: true
         commands:
           size: 3
           bufferLength: 1
           scale: [ 2.0, 2.0, 0.25 ]
           noise: 0
+          during_sim_dt: false
         lastAction:
           size: 12
-          bufferLength: 1
+          bufferLength: 60
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         feetContactState:
           size: 4
-          bufferLength: 5
+          bufferLength: 60
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         heightMeasurement:
           size: 0  # 140
           bufferLength: 1
           scale: 5.0
           noise: 0.06
+          during_sim_dt: false
 
         bodyPos:
           size: 3
           bufferLength: 5
           scale: 1.0
           noise: 0
+          during_sim_dt: true
 #        bodyOri:
 #          size: 3
 #          bufferLength: 11
@@ -266,91 +282,145 @@ env:
           bufferLength: 5
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         feetForce:
           size: 12
           bufferLength: 5
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         rollAngle:
           size: 1
           bufferLength: 5
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         pitchAngle:
           size: 1
           bufferLength: 5
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         gaitCommands:
           size: 6
           bufferLength: 1
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         gaitParamsAct:
           size: 6
           bufferLength: 1
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         heightCommands:
           size: 1
           bufferLength: 1
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         feetPositionRelHip:
           size: 12
           bufferLength: 5
           scale: 1.0
           noise: 0.001
+          during_sim_dt: true
         feetLinVelRelHip:
           size: 12
           bufferLength: 5
           scale: 1.0
           noise: 0.01
+          during_sim_dt: true
         armature_coeffs_real:
           size: 1
           bufferLength: 1
           scale: 1.0
           noise: 0.
+          during_sim_dt: true
         friction_coeffs_real:
           size: 1
           bufferLength: 1
           scale: 1.0
           noise: 0.
+          during_sim_dt: true
         power_norm:
           size: 1
           bufferLength: 1
           scale: 1.0
           noise: 0.01
+          during_sim_dt: true
         command_lin_vel_x:
           size: 1
           bufferLength: 1
           scale: 1.0
           noise: 0.0
+          during_sim_dt: true
         vx_mean:
           size: 1
           bufferLength: 1
           scale: 1.0
           noise: 0.01
+          during_sim_dt: true
+        ref_phase_current:
+          size: 4
+          bufferLength: 3
+          scale: 1.0
+          noise: 0.0
+          during_sim_dt: false
         feet_phase_sincos:
           size: 8
           bufferLength: 1
           scale: 1.0
           noise: 0.0
+          during_sim_dt: false
         ref_phase_norm_sincos_current:
           size: 8
           bufferLength: 3
           scale: 1.0
           noise: 0.0
+          during_sim_dt: false
         ref_phase_norm_sincos_next:
           size: 8
           bufferLength: 1
           scale: 1.0
           noise: 0.0
+          during_sim_dt: false
+        motor_not_broken_flag:
+          size: 12
+          bufferLength: 6
+          scale: 1.0
+          noise: 0.0
+          during_sim_dt: false
+        leg_not_broken_flag:
+          size: 4
+          bufferLength: 6
+          scale: 1.0
+          noise: 0.0
+          during_sim_dt: false
+        ref_phase_norm_sincos_leg_broken:
+          size: 8
+          bufferLength: 3
+          scale: 1.0
+          noise: 0.0
+          during_sim_dt: false
+        gait_phase_leg_broken:
+          size: 4
+          bufferLength: 3
+          scale: 1.0
+          noise: 0.0
+          during_sim_dt: false
+        global_clock_phase_sin_cos:
+          size: 2
+          bufferLength: 6
+          scale: 1.0
+          noise: 0.0
+          during_sim_dt: false
         body_traj_err:
           size: 12
           bufferLength: 1
           scale: 1.0
           noise: 0.01
+          during_sim_dt: true
 
     # normalization
     linearVelocityScale: 2.0
@@ -375,7 +445,7 @@ env:
     restitutionRange: [ 0.0, 0.5 ]
     armatureRange: [0.0, 0.01]
     pushRobots: true
-    pushInterval_s: [2., 2.] # [7., 9.]
+    pushInterval_s: [7., 9.] # [7., 9.]
     randomPushRanges:
       velocity: [ -1.0, 1.0 ]
 
@@ -383,14 +453,14 @@ env:
     episodeLength_s: 30
 
     commands_change_s: [5., 7.] # not change in an episode if greater than episodeLength_s
-    gait_commands_change_s: [7., 11.]  #[6., 8.] #[7., 11.]
+    gait_commands_change_s: [70., 110.]  #[6., 8.] #[7., 11.]
     height_commands_change_s: [97., 911.]
 
     randomCommandVelocityRanges:
       # train
-      linear_x: [ -0.5, 1.2 ] # min max [m/s]
+      linear_x: [ -0.5, 1.5 ] # min max [m/s]
       linear_y: [ -0.5, 0.5 ]   # min max [m/s]
-      yaw: [ -1., 1. ]    # min max [rad/s]
+      yaw: [ -1.0, 1.0 ]    # min max [rad/s]
 
     randomCommandGaitRanges:
       period: [0.3, 0.5] # [0.24, 0.52]

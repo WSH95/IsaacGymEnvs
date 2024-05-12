@@ -8,7 +8,8 @@ num_controller_threads: 26
 
 env:
   numEnvs: ${resolve_default:4096,${...num_envs}}
-  numObservations: 263  #191  #99 # 77 # 418 # 48 # 52 # 163
+  numObservations: 787  #191  #99 # 77 # 418 # 48 # 52 # 163
+  numStates: 92
   numActions: 12
   envSpacing: 3.  # [m]
   enableDebugVis: false
@@ -39,7 +40,7 @@ env:
   xywVelocityCommandThreshold: [ 0.1, 0.05, 0.1 ] # [ 0.1, 0.05, 0.1 ]
 
   baseInitState:
-    pos: [ 0.0, 0.0, 0.32 ] # x,y,z [m] 0.28
+    pos: [ 0.0, 0.0, 0.302 ] # x,y,z [m] 0.28
     #    rot: [ 0.0, 0.0, 0.0, 1.0 ] # x,y,z,w [quat]
     rpy: [ 0.0, 0.0, 0.0 ] # roll, pitch, yaw [rad]
     vLinear: [ 0.0, 0.0, 0.0 ]  # x,y,z [m/s]
@@ -62,15 +63,15 @@ env:
     RL_calf_joint: -1.5908 # -1.7264    # [rad]
 
   terrain:
-    terrainType: trimesh # none, plane, or trimesh
+    terrainType: plane # none, plane, or trimesh
     staticFriction: 1.  # [-]
     dynamicFriction: 1.  # [-]
     restitution: 0.0        # [-]
     # rough terrain only:
     curriculum: false
     maxInitMapLevel: 0
-    mapLength: 8. # 40.
-    mapWidth: 8. # 40.
+    mapLength: 20. # 40.
+    mapWidth: 20. # 40.
     numLevels: 10 # 10
     numTerrains: 20 # 20
     # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
@@ -80,7 +81,7 @@ env:
     numTerrainObservations: 140
     # contain terrain map in observation
     addTerrainObservation: false
-    useMultiprocess: false
+    useMultiprocess: true
     targetThreshold: 0.5
 
 
@@ -107,7 +108,7 @@ env:
     torquesRewardScale: -1.0e-5  #-1.0e-5 # -1.0e-5
     deltaTorquesRewardScale: -1.0e-7 # -1.0e-7
     jointAccRewardScale: -2.5e-7 # -2.5e-7
-    baseHeightRewardScale: -0.0 # -0.0
+    baseHeightRewardScale: -0.5 # -0.0
     feetAirTimeRewardScale: 0.0 # 0.0
     kneeCollisionRewardScale: -10. # -10.0
     fallenOverRewardScale: -0.0 # -0.0
@@ -133,17 +134,17 @@ env:
     imitationTorque: 0.
     imitationJointPos: -0.  # -0.4
     imitationJointVel: 0.
-    imitationFootPos: -0.0  #-0.01
-    imitationFootVel: -0.0  #-0.04
+    imitationFootPos: -0.0  #-0.005
+    imitationFootVel: -0.0  #-0.01
     imitationLinMomentum: -0.0
     imitationAngMomentum: -0.0
     # feet contact regulating
-    feetContactRegulate: 0.5  #-0.5
+    feetContactRegulate: 0.0  #1.0 #-0.5
 
     rewards:
       weights:
         qr: 1.0
-        contact_schedule: 0.
+        contact_schedule: 1.
         kine_imitation: 1.
         dyna_imitation: 0.
         smooth: 1.
@@ -168,31 +169,50 @@ env:
 
     observationConfig:
       addNoise: true
+      states_combination:
+        commands: 0
+        linearVelocity: 0
+        angularVelocity: 0
+        projectedGravity: 0
+        motor_not_broken_flag: 0
+        leg_not_broken_flag: 0
+        dofPositionRelInit: 0
+        dofVelocity: 0
+        lastAction: 0
+        feetContactState: 0
+        ref_phase_norm_sincos_leg_broken: [2, 1, 0]
       combination:
+#        global_clock_phase_sin_cos: [2, 1, 0]
+#        motor_not_broken_flag: 0
+#        leg_not_broken_flag: 0
 #        gaitCommands: 0
 #        heightCommands: 0
         commands: 0  #[9, 6, 3, 0] # size -> 3
-        linearVelocity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
-        angularVelocity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
-        rollAngle: 0
-        pitchAngle: 0
-#        projectedGravity: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
+        linearVelocity: [150, 140, 130, 120, 110, 100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0] # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
+        angularVelocity: [150, 140, 130, 120, 110, 100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0] # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
+#        rollAngle: 0
+#        pitchAngle: 0
+        projectedGravity: [150, 140, 130, 120, 110, 100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0] # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
 #        body_traj_err: 0
 
+#        motor_not_broken_flag: 0
+#        leg_not_broken_flag: 0
+
 #        dofPosition: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
-        dofPositionRelInit: [50, 40, 30, 20, 10, 0] # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
-        dofVelocity: [50, 40, 30, 20, 10, 0] # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
+        dofPositionRelInit: [150, 140, 130, 120, 110, 100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0] # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
+        dofVelocity: [150, 140, 130, 120, 110, 100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0] # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
 #        command_lin_vel_x: 0
 #        vx_mean: 0
-        lastAction: [50, 40, 30, 20, 10, 0] # size -> 8
+        lastAction: [150, 140, 130, 120, 110, 100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0] # size -> 8
 #        gaitParamsAct: 0
 #        feet_phase_sincos: 0
 
 #        feetPositionRelHip: 0
 #        feetLinVelRelHip: 0
-        feetContactState: [50, 40, 30, 20, 10, 0] # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 4
-        global_clock_phase_sin_cos: [5, 4, 3, 2, 1, 0]
+        feetContactState: [150, 140, 130, 120, 110, 100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0] # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 4
+#        global_clock_phase_sin_cos: [2, 1, 0]
 #        ref_phase_norm_sincos_current: [2, 1, 0]
+#        ref_phase_norm_sincos_leg_broken: [2, 1, 0]
 #        ref_phase_norm_sincos_next: 0
 #        heightMeasurement: 0
 #        armature_coeffs_real: 0
@@ -203,60 +223,71 @@ env:
       components:
         linearVelocity:
           size: 3
-          bufferLength: 5
+          bufferLength: 160
           scale: 2.0
           noise: 0.1
+          during_sim_dt: true
         angularVelocity:
           size: 3
-          bufferLength: 5
+          bufferLength: 160
           scale: 0.25
           noise: 0.2
+          during_sim_dt: true
         projectedGravity:
           size: 3
-          bufferLength: 5
+          bufferLength: 160
           scale: 1.0
           noise: 0.05
+          during_sim_dt: true
         dofPosition:
           size: 12
-          bufferLength: 5
+          bufferLength: 2
           scale: 1.0
           noise: 0.01
+          during_sim_dt: true
         dofPositionRelInit:
           size: 12
-          bufferLength: 60
+          bufferLength: 160
           scale: 1.0
           noise: 0.01
+          during_sim_dt: true
         dofVelocity:
           size: 12
-          bufferLength: 60
+          bufferLength: 160
           scale: 0.05  # 0.05
           noise: 1.5
+          during_sim_dt: true
         commands:
           size: 3
-          bufferLength: 1
+          bufferLength: 6
           scale: [ 2.0, 2.0, 0.25 ]
           noise: 0
+          during_sim_dt: false
         lastAction:
           size: 12
-          bufferLength: 60
+          bufferLength: 160
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         feetContactState:
           size: 4
-          bufferLength: 60
+          bufferLength: 160
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         heightMeasurement:
           size: 0  # 140
           bufferLength: 1
           scale: 5.0
           noise: 0.06
+          during_sim_dt: false
 
         bodyPos:
           size: 3
-          bufferLength: 5
+          bufferLength: 2
           scale: 1.0
           noise: 0
+          during_sim_dt: true
 #        bodyOri:
 #          size: 3
 #          bufferLength: 11
@@ -264,99 +295,148 @@ env:
 #          noise: 0
         motorTorque:
           size: 12
-          bufferLength: 5
+          bufferLength: 2
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         feetForce:
           size: 12
-          bufferLength: 5
+          bufferLength: 2
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         rollAngle:
           size: 1
-          bufferLength: 5
+          bufferLength: 2
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         pitchAngle:
           size: 1
-          bufferLength: 5
+          bufferLength: 2
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         gaitCommands:
           size: 6
-          bufferLength: 1
+          bufferLength: 2
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         gaitParamsAct:
           size: 6
-          bufferLength: 1
+          bufferLength: 2
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         heightCommands:
           size: 1
-          bufferLength: 1
+          bufferLength: 2
           scale: 1.0
           noise: 0
+          during_sim_dt: true
         feetPositionRelHip:
           size: 12
-          bufferLength: 5
+          bufferLength: 2
           scale: 1.0
           noise: 0.001
+          during_sim_dt: true
         feetLinVelRelHip:
           size: 12
-          bufferLength: 5
+          bufferLength: 2
           scale: 1.0
           noise: 0.01
+          during_sim_dt: true
         armature_coeffs_real:
           size: 1
-          bufferLength: 1
+          bufferLength: 6
           scale: 1.0
           noise: 0.
+          during_sim_dt: false
         friction_coeffs_real:
           size: 1
-          bufferLength: 1
+          bufferLength: 6
           scale: 1.0
           noise: 0.
+          during_sim_dt: false
         power_norm:
           size: 1
-          bufferLength: 1
+          bufferLength: 2
           scale: 1.0
           noise: 0.01
+          during_sim_dt: true
         command_lin_vel_x:
           size: 1
-          bufferLength: 1
+          bufferLength: 2
           scale: 1.0
           noise: 0.0
+          during_sim_dt: true
         vx_mean:
           size: 1
-          bufferLength: 1
+          bufferLength: 2
           scale: 1.0
           noise: 0.01
+          during_sim_dt: true
+        ref_phase_current:
+          size: 4
+          bufferLength: 6
+          scale: 1.0
+          noise: 0.0
+          during_sim_dt: false
         feet_phase_sincos:
           size: 8
-          bufferLength: 1
+          bufferLength: 6
           scale: 1.0
           noise: 0.0
+          during_sim_dt: false
         ref_phase_norm_sincos_current:
           size: 8
-          bufferLength: 3
+          bufferLength: 6
           scale: 1.0
           noise: 0.0
+          during_sim_dt: false
         ref_phase_norm_sincos_next:
           size: 8
-          bufferLength: 1
+          bufferLength: 6
           scale: 1.0
           noise: 0.0
+          during_sim_dt: false
+        motor_not_broken_flag:
+          size: 12
+          bufferLength: 6
+          scale: 1.0
+          noise: 0.0
+          during_sim_dt: false
+        leg_not_broken_flag:
+          size: 4
+          bufferLength: 6
+          scale: 1.0
+          noise: 0.0
+          during_sim_dt: false
+        ref_phase_norm_sincos_leg_broken:
+          size: 8
+          bufferLength: 6
+          scale: 1.0
+          noise: 0.0
+          during_sim_dt: false
+        gait_phase_leg_broken:
+          size: 4
+          bufferLength: 6
+          scale: 1.0
+          noise: 0.0
+          during_sim_dt: false
         global_clock_phase_sin_cos:
           size: 2
           bufferLength: 6
           scale: 1.0
           noise: 0.0
+          during_sim_dt: false
         body_traj_err:
           size: 12
-          bufferLength: 1
+          bufferLength: 2
           scale: 1.0
           noise: 0.01
+          during_sim_dt: true
 
     # normalization
     linearVelocityScale: 2.0
@@ -380,7 +460,7 @@ env:
     frictionRange: [ -0.4, 1.0 ]
     restitutionRange: [ 0.0, 0.5 ]
     armatureRange: [0.0, 0.01]
-    pushRobots: true
+    pushRobots: false
     pushInterval_s: [7., 9.] # [7., 9.]
     randomPushRanges:
       velocity: [ -1.0, 1.0 ]

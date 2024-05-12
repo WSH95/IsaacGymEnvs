@@ -8,6 +8,7 @@ class CircleBuffer:
         self.buffer_shape = (buffer_length, num_buckets,) + single_data_shape
         self.single_data_shape = single_data_shape
         self.data_shape = (num_buckets,) + single_data_shape
+        self.data_dtype = data_type
         self.device = device
         self.buffer = torch.zeros(self.buffer_shape, dtype=data_type, device=device, requires_grad=False)
         self.buffer_len: int = buffer_length
@@ -24,7 +25,7 @@ class CircleBuffer:
         self.rear = self.buffer_len - 1
         # for i in range(self.buffer_len):
         #     self.buffer[i] = data.clone().to(self.device)
-        self.buffer[:] = data.clone().to(self.device).unsqueeze(dim=0).repeat_interleave(self.buffer_len, 0)
+        self.buffer[:] = data.clone().to(self.device).to(self.data_dtype).unsqueeze(dim=0).repeat_interleave(self.buffer_len, 0)
 
     def reset_and_fill_index(self, idx: Union[List, ListConfig, torch.Tensor], data: torch.Tensor):
         assert isinstance(idx, (List, ListConfig, torch.Tensor))
@@ -33,14 +34,14 @@ class CircleBuffer:
             idx = torch.tensor(idx, dtype=torch.long)
         else:
             idx = idx.to(torch.long)
-        self.buffer[:, idx, :] = data.clone().to(self.device).unsqueeze(dim=0).repeat_interleave(self.buffer_len, 0)
+        self.buffer[:, idx, :] = data.clone().to(self.device).to(self.data_dtype).unsqueeze(dim=0).repeat_interleave(self.buffer_len, 0)
 
     def record(self, data: torch.Tensor):
         assert data.shape == self.data_shape
         self.front = (self.front + 1) % self.buffer_len
         self.rear = (self.rear + 1) % self.buffer_len
 
-        self.buffer[self.rear] = data.clone().to(self.device)
+        self.buffer[self.rear] = data.clone().to(self.device).to(self.data_dtype)
 
     def get_latest_data(self):
         return self.buffer[self.rear].clone()

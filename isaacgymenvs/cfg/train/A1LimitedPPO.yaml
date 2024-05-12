@@ -68,13 +68,41 @@ params:
     kl_threshold: 0.01  # 0.008 # target kl for adaptive lr
     truncate_grads: True
     grad_norm: 1.
-    horizon_length: 32  #64 # 1024 # 48 # wsh_annotation: 24
-    minibatch_size: 32768  #65536  # 73728  # 36864 # 16384 # 12288
+    horizon_length: 2  #64 # 1024 # 48 # wsh_annotation: 24
+    minibatch_size: 4096  #65536  # 73728  # 36864 # 16384 # 12288
     mini_epochs: 5
     critic_coef: 1.0
     clip_value: True
     seq_len: 4 # only for rnn
     bounds_loss_coef: 0.0  # 0.
+
+#    central_value_config:
+#      minibatch_size: 65536
+#      mini_epochs: 5
+#      learning_rate: 2.e-4
+#      lr_schedule: adaptive
+#      kl_threshold: 0.01
+#      clip_value: True
+#      normalize_input: True
+#      truncate_grads: True
+#
+#      network:
+#        name: actor_critic
+#        central_value: True
+#        mlp:
+#          units: [512, 256, 128]
+#          activation: elu
+#          d2rl: False
+#          initializer:
+#            name: default
+#          regularizer:
+#            name: None
+#        rnn:
+#          name: lstm
+#          units: 1024
+#          layers: 1
+#          before_mlp: True
+#          layer_norm: True
 
     max_epochs: ${resolve_default:20000,${....max_iterations}}
     save_best_after: 50  # 100

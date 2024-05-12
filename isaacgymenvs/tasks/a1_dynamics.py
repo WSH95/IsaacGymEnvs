@@ -2119,6 +2119,7 @@ class A1Dynamics(VecTask):
         self.randomize_buf += 1
         self.common_step_counter += 1
         self.gait_commands_count += 1
+        # print(f"gait_count-progress: {(self.gait_commands_count==self.progress_buf).all()}")
         self.schedule_random()
         # if self.push_flag and self.common_step_counter % self.push_interval == 0:  ### wsh_annotation: self.push_interval > 0
         #     self.push_robots()
@@ -2132,7 +2133,7 @@ class A1Dynamics(VecTask):
         self.update_pre_state()
         self.record_states_into_buffer()
 
-        self.ground_height_current[:] = self.get_heights_xy(self.root_states[:, :2])
+        self.ground_height_current[:] = self.get_heights_xy(self.root_states[:, :2]) - self.init_position_bias_rel_world[:, 2]  # controller world frame
         self.update_body_trajectory()
 
         self.calculate_vel_horizon_frame(self.base_lin_vel, self.base_ang_vel, self.base_lin_vel_command,

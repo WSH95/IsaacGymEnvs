@@ -431,6 +431,86 @@ class A1Record(VecTask):
         self.default_dof_pos = torch.zeros_like(self.dof_pos, dtype=torch.float, device=self.device,
                                                 requires_grad=False)
 
+        # set motor broken
+        self.motor_broken_count = torch.randint(0, 3, (self.num_envs,), device=self.device, dtype=torch.long)
+        # self.motor_broken_count[:] = 2
+        self.motor_broken_table = torch.zeros(self.num_envs, 3, dtype=torch.long, device=self.device, requires_grad=False)
+        env_id_count0 = torch.where(self.motor_broken_count == 0)[0]
+        env_id_count1 = torch.where(self.motor_broken_count == 1)[0]
+        env_id_count2 = torch.where(self.motor_broken_count == 2)[0]
+        env_id_count_not0 = torch.where(self.motor_broken_count != 0)[0]
+        self.motor_broken_table[env_id_count0, :] = -1
+        self.motor_broken_table[env_id_count1, 1:] = -2
+        self.motor_broken_table[env_id_count2, 2] = -torch.randint(3, 5, (len(env_id_count2),), device=self.device, dtype=torch.long)
+        self.motor_broken_table[env_id_count_not0, 0] = torch.randint(0, self.num_dof, (len(env_id_count_not0),), device=self.device, dtype=torch.long)
+        # self.motor_broken_table[self.env_id_count_not0, 0] = 2
+        self.motor_broken_table[env_id_count2, 1] = torch.randint(0, self.num_dof, (len(env_id_count2),), device=self.device, dtype=torch.long)
+        env_id_count_2_duplicate = torch.where((self.motor_broken_table[:, 0] == self.motor_broken_table[:, 1]) & (self.motor_broken_table[:, 2] < -2))[0]
+        self.motor_broken_table[env_id_count_2_duplicate, 1] = (self.motor_broken_table[env_id_count_2_duplicate, 1] + 1) % self.num_dof
+        self.motor_not_broken_flag = torch.ones(self.num_envs, self.num_dof, dtype=torch.long, device=self.device, requires_grad=False)
+        self.motor_not_broken_flag1 = torch.ones(self.num_envs, self.num_dof, dtype=torch.long, device=self.device, requires_grad=False)
+        self.motor_not_broken_flag2 = torch.ones(self.num_envs, self.num_dof, dtype=torch.long, device=self.device, requires_grad=False)
+        self.leg_broken_flag = torch.zeros(self.num_envs, 4, dtype=torch.long, device=self.device, requires_grad=False)
+        self.leg_not_broken_flag = (~self.leg_broken_flag.bool()).to(torch.long)
+        self.leg_broken_flag1 = torch.zeros(self.num_envs, 4, dtype=torch.long, device=self.device, requires_grad=False)
+        self.leg_broken_flag2 = torch.zeros(self.num_envs, 4, dtype=torch.long, device=self.device, requires_grad=False)
+        self.motor_not_broken_flag1[env_id_count_not0, self.motor_broken_table[env_id_count_not0, 0]] = 0
+        env_id_count2_3 = torch.where(self.motor_broken_table[:, 2] == -3)[0]
+        self.motor_not_broken_flag1[env_id_count2_3, self.motor_broken_table[env_id_count2_3, 1]] = 0
+        self.motor_not_broken_flag2 = self.motor_not_broken_flag1.clone()
+        env_id_count2_4 = torch.where(self.motor_broken_table[:, 2] == -4)[0]
+        self.motor_not_broken_flag2[env_id_count2_4, self.motor_broken_table[env_id_count2_4, 1]] = 0
+        # self.motor_not_broken_flag2[:] = 1
+        # self.motor_not_broken_flag2[:, [4, 10]] = 0
+        self.leg_broken_flag1 = torch.any(self.motor_not_broken_flag1.resize(self.num_envs, 4, 3) == 0, dim=2).to(torch.long)
+        self.leg_broken_flag2 = torch.any(self.motor_not_broken_flag2.resize(self.num_envs, 4, 3) == 0, dim=2).to(torch.long)
+        self.motor_broken_count1 = torch.randint(450, 550, (self.num_envs,), dtype=torch.long, device=self.device)
+        self.motor_broken_count2 = torch.randint(950, 1050, (self.num_envs,), dtype=torch.long, device=self.device)
+        self.leg_broken_count = torch.sum(self.leg_broken_flag, dim=1)
+        self.gait_list_leg_broken = [[0.3, 0.75, 0.5, 0.0, 0.75, 0.25, 1.0, 1.0, 1.0, 1.0],
+                                     [0.3, 2.0 / 3.0, 5.0 / 6.0, 0.0, 1.0 / 3.0, 2.0 / 3.0, 0.0, 1.0, 1.0, 1.0],
+                                     [0.3, 2.0 / 3.0, 0.0, 5.0 / 6.0, 1.0 / 3.0, 2.0 / 3.0, 1.0, 0.0, 1.0, 1.0],
+                                     [0.3, 2.0 / 3.0, 0.0, 1.0 / 3.0, 5.0 / 6.0, 2.0 / 3.0, 1.0, 1.0, 0.0, 1.0],
+                                     [0.3, 2.0 / 3.0, 0.0, 1.0 / 3.0, 2.0 / 3.0, 5.0 / 6.0, 1.0, 1.0, 1.0, 0.0],
+                                     [0.3, 0.5, 0.75, 0.75, 0.0, 0.5, 0.0, 0.0, 1.0, 1.0],
+                                     [0.3, 0.5, 0.75, 0.0, 0.75, 0.5, 0.0, 1.0, 0.0, 1.0],
+                                     [0.3, 0.5, 0.75, 0.0, 0.0, 0.75, 0.0, 1.0, 1.0, 0.0],
+                                     [0.3, 0.5, 0.0, 0.75, 0.75, 0.0, 1.0, 0.0, 0.0, 1.0],
+                                     [0.3, 0.5, 0.0, 0.75, 0.5, 0.75, 1.0, 0.0, 1.0, 0.0],
+                                     [0.3, 0.5, 0.0, 0.5, 0.75, 0.75, 1.0, 1.0, 0.0, 0.0],
+                                     [0.3, 0.5, 0.75, 0.75, 0.75, 0.0, 0.0, 0.0, 0.0, 1.0],
+                                     [0.3, 0.5, 0.75, 0.75, 0.0, 0.75, 0.0, 0.0, 1.0, 0.0],
+                                     [0.3, 0.5, 0.75, 0.0, 0.75, 0.75, 0.0, 1.0, 0.0, 0.0],
+                                     [0.3, 0.5, 0.0, 0.75, 0.75, 0.75, 1.0, 0.0, 0.0, 0.0]]
+        self.gait_tensor_leg_broken = torch.tensor(self.gait_list_leg_broken, dtype=torch.float, device=self.device, requires_grad=False)
+        self.index_leg_broken_flag_to_gait = torch.zeros(2, 2, 2, 2, dtype=torch.long, device=self.device, requires_grad=False)
+        self.index_leg_broken_flag_to_gait[0, 0, 0, 0] = 0
+        self.index_leg_broken_flag_to_gait[1, 0, 0, 0] = 1
+        self.index_leg_broken_flag_to_gait[0, 1, 0, 0] = 2
+        self.index_leg_broken_flag_to_gait[0, 0, 1, 0] = 3
+        self.index_leg_broken_flag_to_gait[0, 0, 0, 1] = 4
+        self.index_leg_broken_flag_to_gait[1, 1, 0, 0] = 5
+        self.index_leg_broken_flag_to_gait[1, 0, 1, 0] = 6
+        self.index_leg_broken_flag_to_gait[1, 0, 0, 1] = 7
+        self.index_leg_broken_flag_to_gait[0, 1, 1, 0] = 8
+        self.index_leg_broken_flag_to_gait[0, 1, 0, 1] = 9
+        self.index_leg_broken_flag_to_gait[0, 0, 1, 1] = 10
+        self.index_leg_broken_flag_to_gait[1, 1, 1, 0] = 11
+        self.index_leg_broken_flag_to_gait[1, 1, 0, 1] = 12
+        self.index_leg_broken_flag_to_gait[1, 0, 1, 1] = 13
+        self.index_leg_broken_flag_to_gait[0, 1, 1, 1] = 14
+        self.index_leg_broken_flag_to_gait[1, 1, 1, 1] = 15
+        self.gait_index_leg_broken = torch.zeros(self.num_envs, dtype=torch.long, device=self.device, requires_grad=False)
+        self.gait_params_leg_broken = torch.zeros(self.num_envs, 10, dtype=torch.float, device=self.device, requires_grad=False)
+        self.gait_phase_leg_broken = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device, requires_grad=False)
+        self.gait_phase_normed_leg_broken = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device, requires_grad=False)
+        self.ref_phase_C_des_leg_broken = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device, requires_grad=False)
+        self.ref_phase_norm_sincos_leg_broken = torch.zeros(self.num_envs, 8, dtype=torch.float, device=self.device, requires_grad=False)
+
+        self.global_clock_period = 0.3
+        self.global_clock_phase = torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
+        self.global_clock_phase_pi = torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
+        self.global_clock_phase_sin_cos = torch.zeros(self.num_envs, 2, dtype=torch.float, device=self.device, requires_grad=False)
 
         for i in range(len(self.dof_names)):
             name = self.dof_names[i]
@@ -453,7 +533,7 @@ class A1Record(VecTask):
                              "gait_phase_shape": torch_zeros(), "imitation_torque": torch_zeros(),
                              "imitation_joint_pos": torch_zeros(), "imitation_joint_vel": torch_zeros(),
                              "imitation_foot_pos": torch_zeros(), "imitation_foot_vel": torch_zeros(),
-                             "feet_contact_regulate": torch_zeros()}
+                             "feet_contact_regulate": torch_zeros(), "feet_height_leg_broken": torch_zeros()}
 
         self.episode_sums2 = {
             "qr": torch_zeros(), "contact_schedule": torch_zeros(), "kine_imitation": torch_zeros(), "dyna_imitation": torch_zeros(), "smooth": torch_zeros(),
@@ -493,6 +573,9 @@ class A1Record(VecTask):
         self.base_ang_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
 
+        self.horizon_lin_vel = torch.zeros_like(self.base_lin_vel)
+        self.horizon_ang_vel = torch.zeros_like(self.base_ang_vel)
+
         # acceleration
         self.last_base_lin_vel_rel_world = self.root_states[:, 7:10].clone().detach()
         self.gravity_acc = torch.tensor([0., 0., -9.81], dtype=torch.float, device=self.device, requires_grad=False)
@@ -500,10 +583,10 @@ class A1Record(VecTask):
                                         requires_grad=False) - self.gravity_acc
 
         # extra force or torque
-        self.extra_force = torch.zeros(self.num_envs, self.num_bodies, 3, dtype=torch.float, device=self.device, requires_grad=False)
-        self.extra_torque = torch.zeros(self.num_envs, self.num_bodies, 3, dtype=torch.float, device=self.device, requires_grad=False)
-        self.extra_force[:, 0, 2] = 0.0
-        self.extra_torque[:, 0, 1] = 0.0
+        self.extra_force = torch.zeros(self.num_envs, self.num_bodies, 3, dtype=torch.float, device=self.device,
+                                       requires_grad=False)
+        self.extra_torque = torch.zeros(self.num_envs, self.num_bodies, 3, dtype=torch.float, device=self.device,
+                                        requires_grad=False)
 
         # controller reset buf
         self.controller_reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
@@ -543,10 +626,16 @@ class A1Record(VecTask):
                                   "power_norm": self.power_norm,
                                   "command_lin_vel_x": self.command_lin_vel_x,
                                   "vx_mean": self.vx_mean,
+                                  "ref_phase_current": self.ref_phase_current,
                                   "feet_phase_sincos": self.feet_phase_sincos,
                                   "ref_phase_norm_sincos_current": self.ref_phase_norm_sincos_current,
                                   "ref_phase_norm_sincos_next": self.ref_phase_norm_sincos_next,
-                                  "body_traj_err": self.body_traj_error}
+                                  "body_traj_err": self.body_traj_error,
+                                  "motor_not_broken_flag": self.motor_not_broken_flag,
+                                  "leg_not_broken_flag": self.leg_not_broken_flag,
+                                  "ref_phase_norm_sincos_leg_broken": self.ref_phase_norm_sincos_leg_broken,
+                                  "gait_phase_leg_broken": self.gait_phase_leg_broken,
+                                  "global_clock_phase_sin_cos": self.global_clock_phase_sin_cos}
 
         self.obs_combination = self.cfg["env"]["learn"]["observationConfig"]["combination"]
         for key in self.obs_combination.keys():
@@ -561,6 +650,8 @@ class A1Record(VecTask):
             keys_set = set(self.record_items)
             keys_set.remove("heightMeasurement")
             self.record_items = self.record_items & keys_set
+        key_set_duration_sim_dt = set(self.record_items)
+        key_set_duration_learn_dt = set(self.record_items)
         for key in self.record_items:
             if add_obs_noise:
                 noise = self.obs_components[key]["noise"]
@@ -574,6 +665,12 @@ class A1Record(VecTask):
                                                               device=self.device,
                                                               scale=self.obs_components[key]["scale"],
                                                               noise=noise)
+            if not self.obs_components[key]["during_sim_dt"]:
+                key_set_duration_sim_dt.remove(key)
+            else:
+                key_set_duration_learn_dt.remove(key)
+        self.record_items_duration_sim_dt = self.record_items & key_set_duration_sim_dt
+        self.record_items_duration_learn_dt = self.record_items & key_set_duration_learn_dt
 
         self.vel_average = torch.zeros(self.num_envs, 6, dtype=torch.float, device=self.device, requires_grad=False)
 
@@ -603,17 +700,17 @@ class A1Record(VecTask):
         self.kinematic_feet_pos = torch.zeros(self.num_envs, 4, 3, dtype=torch.float, device=self.device, requires_grad=False)
 
         self.gait_list = [[0.5, 0.75, 0.5, 0.25, 0.75, 0.],  # 0
-                     [0.3, 0.75, 0.5, 0.25, 0.75, 0.],  # 1
-                     [0.5, 0.5, 0.5, 0.5, 0., 0.],  # 2
-                     [0.3, 0.5, 0.5, 0.5, 0., 0.],  # 3
-                     [0.5, 0.3, 0.5, 0.5, 0., 0.],  # 4
-                     [0.3, 0.3, 0.5, 0.5, 0., 0.],  # 5
-                     [0.25, 0.6, 0.5, 0., 0.5, 0.],  # 6
-                     [0.3, 0.5, 0.5, 0., 0.5, 0.],  # 7
-                     [0.3, 0.3, 0., 0., 0., 0.],  # 8
-                     [0.3, 0.5, 0., 0., 0., 0.],  # 9
-                     [0.3, 0.5, 0., 0.5, 0.5, 0.5],  # 10
-                     [1.0, 0.5, 0.5, 0.5, 0., 0.]]  # 11
+                          [0.3, 0.75, 0.5, 0.25, 0.75, 0.],  # 1
+                          [0.5, 0.5, 0.5, 0.5, 0., 0.],  # 2
+                          [0.3, 0.5, 0.5, 0.5, 0., 0.],  # 3
+                          [0.5, 0.3, 0.5, 0.5, 0., 0.],  # 4
+                          [0.3, 0.3, 0.5, 0.5, 0., 0.],  # 5
+                          [0.25, 0.6, 0.5, 0., 0.5, 0.],  # 6
+                          [0.3, 0.5, 0.5, 0., 0.5, 0.],  # 7
+                          [0.3, 0.3, 0., 0., 0., 0.],  # 8
+                          [0.3, 0.5, 0., 0., 0., 0.],  # 9
+                          [0.3, 0.5, 0., 0.5, 0.5, 0.5],  # 10
+                          [1.0, 0.5, 0.5, 0.5, 0., 0.]]  # 11
         self.gait_tensor = torch.tensor(self.gait_list, device=self.device)
         self.num_gait = len(self.gait_list)
         self.gait_id = torch.zeros(self.num_envs, dtype=torch.long, device=self.device, requires_grad=False)
@@ -834,7 +931,7 @@ class A1Record(VecTask):
             ## wsh_annotation: set friction and restitution of robots
             for s in range(len(rigid_shape_prop)):
                 rigid_shape_prop[s].friction = self.friction_coeffs[i]
-                rigid_shape_prop[s].friction = 0.6
+                rigid_shape_prop[s].friction = 0.2
             #     # rigid_shape_prop[s].restitution = restitution_buckets[i % num_buckets]
             #     rigid_shape_prop[s].friction = 1.
             #     rigid_shape_prop[s].rolling_friction = 0.
@@ -848,7 +945,7 @@ class A1Record(VecTask):
                 # dof_props['stiffness'][i] = self.cfg["env"]["control"]["stiffness"] #self.Kp
                 # dof_props['damping'][i] = self.cfg["env"]["control"]["damping"] #self.Kd
                 dof_props['armature'][j] = self.armature_coeffs[i]  # 0.01
-                dof_props['armature'][j] = 0.0
+                # dof_props['armature'][j] = 0.01
 
             self.gym.set_asset_rigid_shape_properties(a1_asset, rigid_shape_prop)
             a1_handle = self.gym.create_actor(env_handle, a1_asset, start_pose, "a1", i, 1, 0)
@@ -914,8 +1011,8 @@ class A1Record(VecTask):
             self.has_fallen |= torch.any(knee_contact, dim=1)
 
         # pos limit termination
-        roll_over = torch.abs(self.euler_xyz[:, 0]) > 1.
-        pitch_over = torch.abs(self.euler_xyz[:, 1]) > 1.
+        roll_over = torch.abs(self.euler_xyz[:, 0]) > 1.57
+        pitch_over = torch.abs(self.euler_xyz[:, 1]) > 1.57
 
         self.reset_buf[:] = self.has_fallen.clone()
         self.reset_buf[:] = torch.where(self.timeout_buf.bool(), torch.ones_like(self.reset_buf), self.reset_buf)
@@ -935,20 +1032,41 @@ class A1Record(VecTask):
         self.modify_vel_command()
         # self.commands[:, 0] = 1.0
 
+        self.update_global_clock()
+        # self.record_global_clock_phase()
+        self.update_motor_broken_state()
+        self.update_timing_phase_leg_broken()
+
         self.modify_desired_gait_command()
         self.calculate_ref_timing_phase()
-        self.record_ref_phase()
+        # self.record_ref_phase()
 
         self.modify_desired_height_command()
 
-        self.record_commands()
+        # self.record_commands()
 
         self.update_ref_body_trajectory()
 
         if self.add_terrain_obs:
             self.measured_heights = self.get_heights()
             self.terrain_height[:] = torch.clip(self.root_states[:, 2].unsqueeze(1) - 0.5 - self.measured_heights, -1, 1.)
-            self.obs_buffer_dict["heightMeasurement"].record(self.terrain_height)
+            # self.obs_buffer_dict["heightMeasurement"].record(self.terrain_height)
+
+        self.record_states_duration_learn_dt()
+
+        # a = self.obs_buffer_dict["gait_phase_leg_broken"].get_index_data([2, 1, 0])
+        # b = self.obs_buffer_dict["ref_phase_current"].get_index_data([2, 1, 0])
+        # tmp_ids = torch.where((torch.abs((self.ref_phase_norm_current-self.gait_phase_normed_leg_broken))%1.0 > 1.0e-2).any(dim=-1))
+        # if len(tmp_ids[0]) > 0:
+        #     print(f"broken: {self.gait_phase_leg_broken[0]}")
+        #     print(f"custom: {self.ref_phase_current[0]}")
+            # print("---------------------------------------------------------------------")
+        # print(f"ref_phase_norm_sincos_current: {a}\nref_phase_norm_sincos_legbrok: {b}")
+        # print(f"a-b: {(torch.abs(self.ref_phase_norm_current-self.gait_phase_normed_leg_broken) < 1.0e-2).all()}")
+        # print(".................")
+        # print(f"C_des_n: {self.ref_phase_C_des[5]}\nC_des_b: {self.ref_phase_C_des_leg_broken[5]}")
+        # print(f"C_err: {(self.ref_phase_C_des - self.ref_phase_C_des_leg_broken<1.0e-1).all()}")
+        # print("---------------------------------------------------------------------")
 
         self.obs_buf[:] = torch.cat([self.obs_buffer_dict[key].get_index_data(self.obs_combination[key]) for key in self.obs_combination.keys()], dim=-1)
 
@@ -1022,6 +1140,7 @@ class A1Record(VecTask):
         # swing schedule reward
         feet_force_norm = torch.norm(self.feet_force.view(self.num_envs, 4, 3), p=2, dim=-1)
         err_swing_schedule = torch.square(feet_force_norm)
+        # err_swing_schedule = torch.where((0.1 < err_swing_schedule) & (err_swing_schedule < 5.0), 5.0, err_swing_schedule)
         rew_swing_schedule = torch.sum((1. - self.ref_phase_C_des) * torch.exp(-err_swing_schedule * self.reward_scales["swing_schedule"]), dim=1) / 4.0
         # stance schedule reward
         feet_vel_xy_world_norm = torch.norm(self.feet_lin_vel_world.view(self.num_envs, 4, 3)[..., :2], p=2, dim=-1)
@@ -1029,6 +1148,7 @@ class A1Record(VecTask):
         rew_stance_schedule = torch.sum(self.ref_phase_C_des * torch.exp(-err_stance_schedule * self.reward_scales["stance_schedule"]), dim=1) / 4.0
         # contact schedule reward
         rew_contact_schedule = (rew_swing_schedule + rew_stance_schedule) * self.reward_weights["contact_schedule"]
+        # rew_contact_schedule = -torch.sum((err_swing_schedule*self.leg_broken_flag > 0.01).to(torch.float), dim=1)*1.0
 
     # kinematic imitation reward
         # feet pos tracking reward
@@ -1050,8 +1170,9 @@ class A1Record(VecTask):
         rew_dof_bias = torch.exp(-err_dof_bias * self.reward_scales["dof_bias"])
         # rew_dof_bias = -err_dof_bias * self.reward_scales["dof_bias"]
         # kinematic imitation reward
-        rew_kine_imitation = (rew_feet_pos_xy * rew_feet_vel_xy * rew_dof_bias - 1.0) * self.reward_weights["kine_imitation"]
-        # rew_kine_imitation = (rew_feet_pos_xy + rew_feet_vel_xy + rew_dof_bias) * self.reward_weights["kine_imitation"]
+        # rew_kine_imitation = (rew_feet_pos_xy * rew_feet_vel_xy * rew_dof_bias - 1.0) * self.reward_weights["kine_imitation"]
+        rew_kine_imitation = (rew_feet_pos_xy + rew_feet_vel_xy + rew_dof_bias) * self.reward_weights["kine_imitation"]
+        rew_kine_imitation = err_dof_bias * (-0.04)
 
     # dynamic imitation reward
         tmp_err_feet_lin_momentum_each = self.ref_feet_lin_momentum - self.feet_lin_momentum
@@ -1074,21 +1195,21 @@ class A1Record(VecTask):
     # smoothness reward
         # action rate reward
         err_action_rate = torch.sum(torch.square(self.actions - self.last_actions), dim=1)
-        rew_action_rate = torch.exp(-err_action_rate * self.reward_scales["action_rate"])
-        # rew_action_rate = -err_action_rate * self.reward_scales["action_rate"]
+        # rew_action_rate = torch.exp(-err_action_rate * self.reward_scales["action_rate"])
+        rew_action_rate = -err_action_rate * self.reward_scales["action_rate"]
         # collision reward
         knee_contact = torch.norm(self.contact_forces[:, self.penalize_contacts_indices, :], dim=2) > self.contact_force_threshold
         err_knee_collision = torch.sum(knee_contact, dim=1)
-        rew_collision = torch.exp(-err_knee_collision * self.reward_scales["collision"])
-        # rew_collision = -err_knee_collision * self.reward_scales["collision"]
+        # rew_collision = torch.exp(-err_knee_collision * self.reward_scales["collision"])
+        rew_collision = -err_knee_collision * self.reward_scales["collision"]
         # stumble reward
         stumble = (torch.norm(self.contact_forces[:, self.feet_indices, :2], dim=2) > 5.) * (torch.abs(self.contact_forces[:, self.feet_indices, 2]) < self.contact_force_threshold)
         err_stumble = torch.any(stumble, dim=1).float()
-        rew_stumble = torch.exp(-err_stumble * self.reward_scales["stumble"])
-        # rew_stumble = -err_stumble * self.reward_scales["stumble"]
+        # rew_stumble = torch.exp(-err_stumble * self.reward_scales["stumble"])
+        rew_stumble = -err_stumble * self.reward_scales["stumble"]
         # smoothness reward
-        rew_smooth = (rew_action_rate * rew_collision * rew_stumble - 1.0) * self.reward_weights["smooth"]
-        # rew_smooth = (rew_action_rate + rew_collision + rew_stumble) * self.reward_weights["smooth"]
+        # rew_smooth = (rew_action_rate * rew_collision * rew_stumble - 1.0) * self.reward_weights["smooth"]
+        rew_smooth = (rew_action_rate + rew_collision + rew_stumble) * self.reward_weights["smooth"]
 
     # calculate total rewards
         self.rew_buf[:] = (rew_qr + rew_contact_schedule + rew_kine_imitation + rew_dyna_imitation + rew_smooth) * self.dt
@@ -1192,10 +1313,10 @@ class A1Record(VecTask):
 
         # orientation penalty TODO relating to velocity
         rew_orient = torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1) * self.rew_scales["orient"]
-        tmp_ori = self.euler_xyz.clone()
-        env_ids_bound = (self.gait_id == 10).nonzero(as_tuple=False).flatten()
-        tmp_ori[env_ids_bound, 1] *= 0.1
-        rew_orient = torch.sum(torch.square(tmp_ori[:, :2] / torch.pi * 180.0), dim=1) * self.rew_scales["orient"]
+        # tmp_ori = self.euler_xyz.clone()
+        # env_ids_bound = (self.gait_id == 10).nonzero(as_tuple=False).flatten()
+        # tmp_ori[env_ids_bound, 1] *= 0.1
+        # rew_orient = torch.sum(torch.square(tmp_ori[:, :2] / torch.pi * 180.0), dim=1) * self.rew_scales["orient"]
 
         # base height penalty
         rew_base_height = torch.square(10.0 * (self.root_states[:, 2] - self.height_commands.squeeze())) * self.rew_scales["base_height"]  # TODO(completed) add target base height to cfg
@@ -1284,7 +1405,7 @@ class A1Record(VecTask):
         # rew_survival = 20.0 * self.commands[0, 0]
         rew_survival = 0.0 * self.dt
 
-        buf_length = 5
+        buf_length = 2
         body_height_buf = self.obs_buffer_dict["bodyPos"].get_len_data_raw(buf_length)[:, 2, :]
         lin_vel_buf = self.obs_buffer_dict["linearVelocity"].get_len_data_raw(buf_length)
         ang_vel_buf = self.obs_buffer_dict["angularVelocity"].get_len_data_raw(buf_length)
@@ -1407,11 +1528,30 @@ class A1Record(VecTask):
         # rew_imitation_torque = torch.exp(-imitation_torque_error / 20.) * self.rew_scales["imitation_torque"]
 
         # feet contact regulating (use C des)
+        # feet_force_norm = torch.norm(self.feet_force.view(self.num_envs, 4, 3), p=2, dim=-1)
+        # feet_vel_xy_world_norm = torch.norm(self.feet_lin_vel_world.view(self.num_envs, 4, 3)[..., :2], p=2, dim=-1)
+        # f_coef = (1. - self.ref_phase_C_des) * (1 - torch.exp(-feet_force_norm / 50.))
+        # vxy_coef = self.ref_phase_C_des * (1 - torch.exp(-feet_vel_xy_world_norm / 1.))
+        # rew_feet_contact_regulate = torch.sum(f_coef + vxy_coef, dim=1) * self.rew_scales["feet_contact_regulate"]
+
+        env_id_leg_broken_count_0 = torch.where(self.leg_broken_count == 0)[0]
+        env_id_leg_broken_count_not_0 = torch.where(self.leg_broken_count > 0)[0]
+        env_id_leg_broken_count_1 = torch.where(self.leg_broken_count == 1)[0]
+        env_id_leg_broken_count_2 = torch.where(self.leg_broken_count == 2)[0]
+
         feet_force_norm = torch.norm(self.feet_force.view(self.num_envs, 4, 3), p=2, dim=-1)
+        # feet_force_norm = torch.where(feet_force_norm > 0.001, 0.02, feet_force_norm)
+        err_swing_schedule = torch.square(feet_force_norm)
+        # err_swing_schedule = torch.where((0.001 < err_swing_schedule) & (err_swing_schedule < 1.0), 1.0, err_swing_schedule)
+        rew_swing_schedule = torch.sum((1. - self.ref_phase_C_des_leg_broken) * (torch.exp(-err_swing_schedule * 0.02) - 1.0), dim=1) / 4.0
+        # stance schedule reward
         feet_vel_xy_world_norm = torch.norm(self.feet_lin_vel_world.view(self.num_envs, 4, 3)[..., :2], p=2, dim=-1)
-        f_coef = (1. - self.ref_phase_C_des) * (1 - torch.exp(-feet_force_norm / 50.))
-        vxy_coef = self.ref_phase_C_des * (1 - torch.exp(-feet_vel_xy_world_norm / 1.))
-        rew_feet_contact_regulate = torch.sum(f_coef + vxy_coef, dim=1) * self.rew_scales["feet_contact_regulate"]
+        err_stance_schedule = torch.square(feet_vel_xy_world_norm)
+        rew_stance_schedule = torch.sum(self.ref_phase_C_des_leg_broken * (torch.exp(-err_stance_schedule * 0.8) - 1.0), dim=1) / 4.0
+        # contact schedule reward
+        rew_feet_contact_regulate = (rew_swing_schedule + rew_stance_schedule) * self.rew_scales["feet_contact_regulate"]
+
+
 
         # foothold
         num_feet = len(self.feet_indices)
@@ -1455,23 +1595,53 @@ class A1Record(VecTask):
         # rew_feet_contact_regulate = torch.exp(-torch.sum(f_coef + vxy_coef, dim=1) * 0.6) * 0.05
 
         # terrain type
-        if self.custom_origins:
-            env_ids_not_plane = (self.terrain_types > 1).nonzero(as_tuple=False).flatten()
-            env_ids_plane = (self.terrain_types < 2).nonzero(as_tuple=False).flatten()
-            rew_base_height[env_ids_not_plane] *= 0.
-            rew_ang_vel_z[env_ids_not_plane] /= 2.0
-            rew_ang_vel_xy[env_ids_not_plane] /= 4.0
-            rew_orient[env_ids_not_plane] *= 0.0
-            # rew_torques[env_ids_not_plane] /= 2.0
-            rew_imitation_foot_pos[env_ids_not_plane] /= 10.0
-            rew_imitation_foot_vel[env_ids_not_plane] /= 10.0
+        # if self.custom_origins:
+        #     env_ids_not_plane = (self.terrain_types > 1).nonzero(as_tuple=False).flatten()
+        #     env_ids_plane = (self.terrain_types < 2).nonzero(as_tuple=False).flatten()
+        #     rew_base_height[env_ids_not_plane] *= 0.
+        #     rew_ang_vel_z[env_ids_not_plane] /= 2.0
+        #     rew_ang_vel_xy[env_ids_not_plane] /= 4.0
+        #     rew_orient[env_ids_not_plane] *= 0.0
+        #     # rew_torques[env_ids_not_plane] /= 2.0
+        #     rew_imitation_foot_pos[env_ids_not_plane] /= 10.0
+        #     rew_imitation_foot_vel[env_ids_not_plane] /= 10.0
+        #
+        #     rew_stumble[env_ids_plane] = 0.
+        #     rew_action_rate[env_ids_plane] = 0.
+        # else:
+        #     rew_stumble[:] = 0.
+        #     rew_action_rate[:] = 0.
 
-            rew_stumble[env_ids_plane] = 0.
-            rew_action_rate[env_ids_plane] = 0.
-        else:
-            rew_stumble[:] = 0.
-            rew_action_rate[:] = 0.
+        rew_feet_contact_regulate[env_id_leg_broken_count_2] *= 0.01
+        # rew_feet_contact_regulate += -torch.sum((feet_force_norm * self.leg_broken_flag > 0.01).to(torch.float), dim=1) * 0.2
 
+        feet_height_rel_ground = self.feet_position_world.view(self.num_envs, 4, 3)[:, :, 2] - self.get_heights_xy(self.feet_position_world.view(self.num_envs, 4, 3)[:, :, :2])
+        err_feet_height_leg_broken = torch.clip((feet_height_rel_ground - 0.05) * self.leg_broken_flag, min=None, max=0.0)
+        # rew_feet_height_leg_broken = (torch.exp(-torch.sum(torch.square(err_feet_height_leg_broken) * 1000., dim=-1)) - 1.0) * 0.02
+        rew_feet_height_leg_broken = -torch.sum(torch.square(err_feet_height_leg_broken), dim=-1) * 600.0 * 0.02
+
+        # rew_hip[env_id_leg_broken_count_0] = 0.0
+        # rew_hip[env_id_leg_broken_count_2] = 0.0
+        rew_dof_bias[env_id_leg_broken_count_not_0] = 0.0
+        # rew_feet_contact_regulate[env_id_leg_broken_count_0] = 0.0
+        rew_lin_vel_xy[env_id_leg_broken_count_2] = torch.exp(-torch.sum(torch.square(
+            self.commands[env_id_leg_broken_count_2, :2] - self.horizon_lin_vel[env_id_leg_broken_count_2, :2]),
+                                                                         dim=1) / 0.25) * self.rew_scales["lin_vel_xy"]
+        rew_ang_vel_z[env_id_leg_broken_count_2] = torch.exp(-torch.square(
+            self.commands[env_id_leg_broken_count_2, 2] - self.horizon_ang_vel[env_id_leg_broken_count_2, 2]) / 0.25) * \
+                                                   self.rew_scales["ang_vel_z"]
+        rew_lin_vel_z[env_id_leg_broken_count_2] = torch.square(self.horizon_lin_vel[env_id_leg_broken_count_2, 2]) * \
+                                                   self.rew_scales["lin_vel_z"]
+        rew_ang_vel_xy[env_id_leg_broken_count_2] = torch.sum(
+            torch.square(self.horizon_ang_vel[env_id_leg_broken_count_2, :2]), dim=1) * self.rew_scales["ang_vel_xy"]
+        rew_orient[env_id_leg_broken_count_2] = 0.0
+        rew_delta_torques[env_id_leg_broken_count_0] = 0.0
+        rew_joint_acc[env_id_leg_broken_count_0] = 0.0
+
+        rew_base_height = torch.square(10.0 * self.body_traj_error[:, 2]) * self.rew_scales["base_height"]
+        rew_base_height[env_id_leg_broken_count_2] = 0.0
+        rew_imitation_foot_pos[env_id_leg_broken_count_not_0] = 0.0
+        rew_imitation_foot_vel[env_id_leg_broken_count_not_0] = 0.0
 
         rew_survival = 0.0 * self.dt
         # total reward
@@ -1479,7 +1649,7 @@ class A1Record(VecTask):
                           rew_torques + rew_joint_acc + rew_knee_collision + rew_action_rate + rew_air_time + rew_hip + rew_stumble + rew_energy + rew_power + rew_survival + \
                           rew_power_max + rew_power_max_std + rew_feet_force_max + rew_feet_force_max_std + rew_torque_max + rew_torque_max_std + rew_fallen_over + rew_delta_torques + rew_dof_bias + \
                           rew_gait_tracking + rew_gait_trans_rate + rew_gait_phase_timing + rew_gait_phase_shape + \
-                          rew_imitation_torque + rew_imitation_joint_pos + rew_imitation_joint_vel + rew_imitation_foot_pos + rew_imitation_foot_vel + rew_feet_contact_regulate
+                          rew_imitation_torque + rew_imitation_joint_pos + rew_imitation_joint_vel + rew_imitation_foot_pos + rew_imitation_foot_vel + rew_feet_contact_regulate + rew_feet_height_leg_broken
         # self.rew_buf[:] = rew_feet_contact_regulate
         # self.rew_buf[:] = rew_lin_vel_xy + rew_ang_vel_z + rew_ang_vel_xy + rew_torques + rew_delta_torques + rew_orient + rew_base_height + rew_imitation_joint_pos + rew_imitation_joint_vel + rew_feet_contact_regulate
         # print(self.rew_buf)
@@ -1527,6 +1697,7 @@ class A1Record(VecTask):
         self.episode_sums["imitation_foot_pos"] += rew_imitation_foot_pos
         self.episode_sums["imitation_foot_vel"] += rew_imitation_foot_vel
         self.episode_sums["feet_contact_regulate"] += rew_feet_contact_regulate
+        self.episode_sums["feet_height_leg_broken"] += rew_feet_height_leg_broken
 
     def reset_idx(self, env_ids):
         # Randomization can happen only at reset time, since it can reset actor positions on GPU
@@ -1536,7 +1707,7 @@ class A1Record(VecTask):
         positions_offset = torch_rand_float(0.8, 1.2, (len(env_ids), self.num_dof), device=self.device)
         velocities = torch_rand_float(-0.1, 0.1, (len(env_ids), self.num_dof), device=self.device)
 
-        positions_offset = 1.0
+        # positions_offset = 1.0
         velocities = 0.0
 
         self.dof_pos[env_ids] = self.default_dof_pos[env_ids] * positions_offset
@@ -1606,6 +1777,11 @@ class A1Record(VecTask):
 
         # self.update_horizon_quat(env_ids)
         self.base_quat_horizon[env_ids] = quat_from_euler_xyz(self.euler_xyz[env_ids, 0], self.euler_xyz[env_ids, 1], torch.zeros_like(self.euler_xyz[env_ids, 2]))
+        self.horizon_quat_in_world[env_ids] = quat_from_euler_xyz(torch.zeros_like(self.euler_xyz[env_ids, 0]),
+                                                                  torch.zeros_like(self.euler_xyz[env_ids, 1]),
+                                                                  self.euler_xyz[env_ids, 2])
+        self.horizon_lin_vel[env_ids] = quat_rotate_inverse(self.horizon_quat_in_world[env_ids], self.root_states[env_ids, 7:10])
+        self.horizon_ang_vel[env_ids] = quat_rotate_inverse(self.horizon_quat_in_world[env_ids], self.root_states[env_ids, 10:13])
         # base_quat_horizon2 = self.base_quat_horizon.clone()
         # world2base_quat = self.base_quat.clone()
         # world2base_quat[:, :3] = -world2base_quat[:, :3].clone()
@@ -1684,6 +1860,15 @@ class A1Record(VecTask):
 
         self.height_commands[env_ids] = 0.3
 
+        self.motor_not_broken_flag[env_ids] = 1
+        self.leg_broken_flag[env_ids] = 0
+        self.leg_not_broken_flag[env_ids] = (~self.leg_broken_flag[env_ids].bool()).to(torch.long)
+        self.motor_broken_count1[env_ids] = torch.randint(0, 1, (len(env_ids),), dtype=torch.long, device=self.device)
+        self.motor_broken_count2[env_ids] = torch.randint(0, 1, (len(env_ids),), dtype=torch.long, device=self.device)
+        self.leg_broken_count[env_ids] = torch.sum(self.leg_broken_flag[env_ids], dim=1)
+        self.gait_index_leg_broken[env_ids] = self.index_leg_broken_flag_to_gait[self.leg_broken_flag[env_ids].transpose(-2, -1).unbind(0)]
+        self.gait_params_leg_broken[env_ids] = self.gait_tensor_leg_broken[self.gait_index_leg_broken[env_ids]]
+
         # self.gait_period_offset[env_ids] = (torch.zeros_like(self.feet_contact_state) + torch_rand_float(-0.23, 0.1, (self.num_envs, 1), device=self.device))[env_ids]
         # self.gait_period_offset[env_ids] = -0.2
         # self.gait_duty_cycle_offset[env_ids] = (torch.zeros_like(self.feet_contact_state) - 0.0)[env_ids]
@@ -1717,20 +1902,20 @@ class A1Record(VecTask):
         self.command_lin_vel_x[env_ids] = 0.0
 
         # fill extras
-        # self.extras["episode"] = {}
-        # for key in self.episode_sums.keys():
-        #     self.extras["episode"]['rew_' + key] = torch.mean(
-        #         self.episode_sums[key][env_ids] / (self.progress_buf[env_ids] * self.dt + 1.e-5))  # / self.max_episode_length_s
-        #     self.episode_sums[key][env_ids] = 0.
-        #     # print(self.extras["episode"]['rew_' + key])
-        # self.extras["episode"]["terrain_level"] = torch.mean(self.terrain_levels.float())
-
         self.extras["episode"] = {}
-        for key in self.episode_sums2.keys():
-            self.extras["episode"]['rew_' + key] = torch.mean(self.episode_sums2[key][env_ids] / float(self.max_episode_length))
-            self.episode_sums2[key][env_ids] = 0.
+        for key in self.episode_sums.keys():
+            self.extras["episode"]['rew_' + key] = torch.mean(
+                self.episode_sums[key][env_ids] / self.max_episode_length_s)  # / self.max_episode_length_s  # (self.progress_buf[env_ids] * self.dt + 1.e-5)
+            self.episode_sums[key][env_ids] = 0.
             # print(self.extras["episode"]['rew_' + key])
         self.extras["episode"]["terrain_level"] = torch.mean(self.terrain_levels.float())
+
+        # self.extras["episode"] = {}
+        # for key in self.episode_sums2.keys():
+        #     self.extras["episode"]['rew_' + key] = torch.mean(self.episode_sums2[key][env_ids] / float(self.max_episode_length))
+        #     self.episode_sums2[key][env_ids] = 0.
+        #     # print(self.extras["episode"]['rew_' + key])
+        # self.extras["episode"]["terrain_level"] = torch.mean(self.terrain_levels.float())
 
         self.extras["rew_error"] = {}
         for key in self.rew_error.keys():
@@ -1804,7 +1989,7 @@ class A1Record(VecTask):
         env_ids = (self.progress_buf % self.push_random_count == 0).nonzero(as_tuple=False).flatten()
         env_ids_int32 = env_ids.to(dtype=torch.int32)
         self.root_states[env_ids, 7:9] = torch_rand_float(self.scheduled_push_velocity_range[0], self.scheduled_push_velocity_range[1], (len(env_ids), 2), device=self.device)  # lin vel x/y
-        self.root_states[env_ids, 7:9] = torch.tensor([0., 1.0], device=self.device)
+        # self.root_states[env_ids, 7:9] = torch.tensor([0., 1.], device=self.device)
         self.gym.set_actor_root_state_tensor_indexed(self.sim,
                                                      gymtorch.unwrap_tensor(self.root_states),
                                                      gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
@@ -1992,12 +2177,13 @@ class A1Record(VecTask):
             # tau_ff_in_use = torch.matmul(self.jacobian.transpose(-2, -1), self.ref_feet_force.reshape(self.num_envs, 4, 3, 1)).squeeze(-1).reshape(self.num_envs, 12)
 
             torques = self._cal_pd(tau_ff_in_use, q_des_in_use, qd_des_in_use, self.Kp, self.Kd)
-            # torques = torques_est
+            # torques = tau_ff_mpc
 
             self.est_feet_force[:] = -(self.ref_phase_contact_state.reshape(self.num_envs, 4, 1, 1) * torch.matmul(self.jacobian.transpose(-2, -1).inverse(), torques.reshape(self.num_envs, 4, 3, 1))).squeeze(-1).reshape(self.num_envs, 12)
             self.ref_feet_force_mpc[:] = -(self.ref_phase_contact_state.reshape(self.num_envs, 4, 1) * self.force_ff_mpc.reshape(self.num_envs, 4, 3)).reshape(self.num_envs, 12)
 
             self.est_feet_force[:] = quat_apply(self.base_quat.repeat(1, 4), self.est_feet_force)
+            self.est_feet_force[:, [2, 5, 8, 11]] = self.feet_force[:, [2, 5, 8, 11]]
             self.ref_feet_force_mpc[:] = quat_apply(self.base_quat.repeat(1, 4), self.ref_feet_force_mpc)
 
             # torques, tau_ff_mpc, q_des, qd_des = self.mit_controller.step_run(self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state, self.motion_planning_interface.get_motion_command())  # self.controller_reset_buf, self.base_quat, self.base_ang_vel, self.base_lin_acc, self.dof_pos, self.dof_vel, self.feet_contact_state
@@ -2029,6 +2215,9 @@ class A1Record(VecTask):
             # torques[:] = torch.where(self.dof_vel < -(tau_max / k + v_max), torch.clip(torques, tmp_min_torque, tau_max * torch.ones_like(torques)), torques)
             # print("torques: ", torques)
             # torques = torch.zeros_like(torques)
+
+            torques *= self.motor_not_broken_flag
+
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
             self.torques[:] = torques.view(self.torques.shape)
             self.gym.apply_rigid_body_force_tensors(self.sim, gymtorch.unwrap_tensor(self.extra_force),
@@ -2043,8 +2232,9 @@ class A1Record(VecTask):
             # self.record_state_test()
 
             self.update_pre_state()
-            self.record_states_into_buffer()
-            self.record_commands()
+            # self.record_states_into_buffer()
+            self.record_states_duration_sim_dt()
+            # self.record_commands()
 
             # self.torques_square_accumulated += torch.square(torques)
 
@@ -2059,12 +2249,13 @@ class A1Record(VecTask):
         # tau_ff_in_use = torch.matmul(self.jacobian.transpose(-2, -1), self.ref_feet_force.reshape(self.num_envs, 4, 3, 1)).squeeze(-1).reshape(self.num_envs, 12)
 
         torques = self._cal_pd(tau_ff_in_use, q_des_in_use, qd_des_in_use, self.Kp, self.Kd)
-        # torques = torques_est
+        # torques = tau_ff_mpc
 
         self.est_feet_force[:] = -(self.ref_phase_contact_state.reshape(self.num_envs, 4, 1, 1) * torch.matmul(self.jacobian.transpose(-2, -1).inverse(), torques.reshape(self.num_envs, 4, 3, 1))).squeeze(-1).reshape(self.num_envs, 12)
         self.ref_feet_force_mpc[:] = -(self.ref_phase_contact_state.reshape(self.num_envs, 4, 1) * self.force_ff_mpc.reshape(self.num_envs, 4, 3)).reshape(self.num_envs, 12)
 
         self.est_feet_force[:] = quat_apply(self.base_quat.repeat(1, 4), self.est_feet_force)
+        self.est_feet_force[:, [2, 5, 8, 11]] = self.feet_force[:, [2, 5, 8, 11]]
         self.ref_feet_force_mpc[:] = quat_apply(self.base_quat.repeat(1, 4), self.ref_feet_force_mpc)
         # print(f"est_feet_force: {self.est_feet_force[0]}")
         # print(f"ref_feet_force_mpc: {self.ref_feet_force_mpc[0]}")
@@ -2097,6 +2288,7 @@ class A1Record(VecTask):
         #                          torch.clip(torques, tmp_min_torque, tau_max * torch.ones_like(torques)), torques)
         # print("torques: ", torques)
         # torques = torch.zeros_like(torques)
+        torques *= self.motor_not_broken_flag
         self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(torques))
         self.torques[:] = torques.view(self.torques.shape)
         self.gym.apply_rigid_body_force_tensors(self.sim, gymtorch.unwrap_tensor(self.extra_force),
@@ -2116,6 +2308,7 @@ class A1Record(VecTask):
         self.randomize_buf += 1
         self.common_step_counter += 1
         self.gait_commands_count += 1
+        # print(f"gait_count-progress: {(self.gait_commands_count==self.progress_buf).all()}")
         self.schedule_random()
         # if self.push_flag and self.common_step_counter % self.push_interval == 0:  ### wsh_annotation: self.push_interval > 0
         #     self.push_robots()
@@ -2127,20 +2320,21 @@ class A1Record(VecTask):
         # self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
 
         self.update_pre_state()
-        self.record_states_into_buffer()
+        # self.record_states_into_buffer()
+        self.record_states_duration_sim_dt()
 
-        self.ground_height_current[:] = self.get_heights_xy(self.root_states[:, :2])
+        self.ground_height_current[:] = self.get_heights_xy(self.root_states[:, :2]) - self.init_position_bias_rel_world[:, 2]  # controller world frame
         self.update_body_trajectory()
 
         self.calculate_vel_horizon_frame(self.base_lin_vel, self.base_ang_vel, self.base_lin_vel_command,
                                          self.base_ang_vel_command, self.base_quat_horizon, vel_weight=0.8)
-        self.calculate_ref_foot_xy(self.ref_phase_norm_current, self.ref_lin_vel_horizon_feet[..., :2], self.gait_periods, self.gait_duty)
+        self.calculate_ref_foot_xy(self.gait_phase_normed_leg_broken, self.ref_lin_vel_horizon_feet[..., :2], self.gait_periods, self.gait_duty)
 
         # self.modify_vel_command()
 
         # compute observations, rewards, resets, ...
         self.check_termination()
-        self.compute_reward2()
+        self.compute_reward()
 
         # env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         # if len(env_ids) > 0:
@@ -2402,6 +2596,11 @@ class A1Record(VecTask):
         # self.update_horizon_quat()
         # print(f"base_quat_horizon: {self.base_quat_horizon[0]}")
         self.base_quat_horizon[:] = quat_from_euler_xyz(self.euler_xyz[:, 0], self.euler_xyz[:, 1], torch.zeros_like(self.euler_xyz[:, 2]))
+        self.horizon_quat_in_world[:] = quat_from_euler_xyz(torch.zeros_like(self.euler_xyz[:, 0]),
+                                                            torch.zeros_like(self.euler_xyz[:, 1]),
+                                                            self.euler_xyz[:, 2])
+        self.horizon_lin_vel[:] = quat_rotate_inverse(self.horizon_quat_in_world, self.root_states[:, 7:10])
+        self.horizon_ang_vel[:] = quat_rotate_inverse(self.horizon_quat_in_world, self.root_states[:, 10:13])
         # print(f"base_quat_horizon1: {self.base_quat_horizon[0]}")
         # print("")
         self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
@@ -2465,7 +2664,7 @@ class A1Record(VecTask):
         # print("lin acc: ", self.base_lin_acc)
         # print("last vel:", self.last_base_lin_vel_rel_world)
         # print(f"body_height_real: {(self.root_states[0, 2] - 0.3) * 1000} mm")
-        print(f"base_lin_vel: {self.base_lin_vel[0]}")
+        # print(f"base_lin_vel: {self.base_lin_vel[0]}")
         # print(f"base_ang_vel: {self.base_ang_vel[0]}")
         # print(f"torque: {self.torques[0]}")
         # print(f"joint_pos: {self.dof_pos[0]}")
@@ -2567,6 +2766,42 @@ class A1Record(VecTask):
         #     print(f"body_traj_error: {self.body_traj_error[idx, 5]}")
         #     print(f"wrapped_body_traj_error: {wrap_to_pi(self.body_traj_error[idx, 5])}")
 
+    def update_motor_broken_state(self):
+        env_ids1 = torch.where(self.progress_buf == self.motor_broken_count1)[0]
+        env_ids2 = torch.where(self.progress_buf == self.motor_broken_count2)[0]
+        self.motor_not_broken_flag[env_ids1] = self.motor_not_broken_flag1[env_ids1].clone()
+        self.motor_not_broken_flag[env_ids2] = self.motor_not_broken_flag2[env_ids2].clone()
+        self.leg_broken_flag[env_ids1] = self.leg_broken_flag1[env_ids1].clone()
+        self.leg_broken_flag[env_ids2] = self.leg_broken_flag2[env_ids2].clone()
+        self.leg_not_broken_flag[env_ids1] = (~self.leg_broken_flag[env_ids1].bool()).to(torch.long)
+        self.leg_not_broken_flag[env_ids2] = (~self.leg_broken_flag[env_ids2].bool()).to(torch.long)
+        self.leg_broken_count[env_ids1] = torch.sum(self.leg_broken_flag[env_ids1], dim=1)
+        self.gait_index_leg_broken[env_ids1] = self.index_leg_broken_flag_to_gait[self.leg_broken_flag[env_ids1].transpose(-2, -1).unbind(0)]
+        self.gait_params_leg_broken[env_ids1] = self.gait_tensor_leg_broken[self.gait_index_leg_broken[env_ids1]]
+        self.leg_broken_count[env_ids2] = torch.sum(self.leg_broken_flag[env_ids2], dim=1)
+        self.gait_index_leg_broken[env_ids2] = self.index_leg_broken_flag_to_gait[self.leg_broken_flag[env_ids2].transpose(-2, -1).unbind(0)]
+        self.gait_params_leg_broken[env_ids2] = self.gait_tensor_leg_broken[self.gait_index_leg_broken[env_ids2]]
+        # print(((~self.gait_params_leg_broken[:, -4:].bool()).to(torch.long) == self.leg_broken_flag).all())
+        # print(f"motor_not_broken_flag: {self.motor_not_broken_flag[:]}")
+
+    def update_timing_phase_leg_broken(self):
+        self.gait_phase_leg_broken[:] = (-self.gait_params_leg_broken[:, 2:6] + self.gait_params_leg_broken[:, 6:10] * ((self.progress_buf * self.dt) / self.gait_params_leg_broken[:, 0]).unsqueeze(-1)) % 1.0
+        self.gait_phase_normed_leg_broken[:] = torch.where(self.gait_phase_leg_broken <= self.gait_params_leg_broken[:, 1].unsqueeze(-1), 0.5 * self.gait_phase_leg_broken / self.gait_params_leg_broken[:, 1].unsqueeze(-1), 0.5 + 0.5 * (self.gait_phase_leg_broken - self.gait_params_leg_broken[:, 1].unsqueeze(-1)) / (1. - self.gait_params_leg_broken[:, 1].unsqueeze(-1)))
+        self.ref_phase_C_des_leg_broken[:] = self.ref_phase_trans_distribution.cdf(self.gait_phase_normed_leg_broken) * (1 - self.ref_phase_trans_distribution.cdf(self.gait_phase_normed_leg_broken - 0.5)) + self.ref_phase_trans_distribution.cdf(self.gait_phase_normed_leg_broken - 1)
+        self.ref_phase_norm_sincos_leg_broken[:, [0, 2, 4, 6]] = torch.sin(self.gait_phase_normed_leg_broken * 2.0 * torch.pi)
+        self.ref_phase_norm_sincos_leg_broken[:, [1, 3, 5, 7]] = torch.cos(self.gait_phase_normed_leg_broken * 2.0 * torch.pi)
+        # print(f"ref_phase_C_des_leg_broken: {self.ref_phase_C_des_leg_broken[0]}")
+        # print(f"ref_phase_C_des: {self.ref_phase_C_des[0]}")
+        # print(f"ref_phase_norm_sincos_leg_broken: {self.ref_phase_norm_sincos_leg_broken[0]}")
+
+    def update_global_clock(self):
+        self.global_clock_phase[:] = ((self.progress_buf * self.dt) / self.global_clock_period) % 1.0
+        self.global_clock_phase_pi[:] = self.global_clock_phase * 2.0 * torch.pi
+        self.global_clock_phase_sin_cos[:, 0] = torch.sin(self.global_clock_phase_pi)
+        self.global_clock_phase_sin_cos[:, 1] = torch.cos(self.global_clock_phase_pi)
+        # print(f"global_clock_phase: {self.global_clock_phase[0]}")
+
+
     def modify_vel_command(self):
         env_ids = ((self.progress_buf > 0) & ((self.progress_buf == 25) | (self.progress_buf % self.commands_change_random_count == 0))).nonzero(as_tuple=False).flatten()
         self.commands[env_ids, 0] = torch_rand_float(self.scheduled_command_x_range[0], self.scheduled_command_x_range[1], (len(env_ids), 1), device=self.device).squeeze()
@@ -2591,14 +2826,15 @@ class A1Record(VecTask):
         self.commands[env_ids_heading, 2] = self._heading_to_omega(heading)[env_ids_heading]
         # print(self.commands[0, 2])
 
+        # self.commands[env_ids, 2] = self.commands[env_ids, 3].clone()
 
 
-        self.commands[:, 0] = 0.0
-        self.commands[:, 1] = 0.
-        self.commands[:, 3] = 0.
-        self.commands[:, 2] = self._heading_to_omega(heading)
+        # self.commands[:, 0] = 1.6
+        # self.commands[:, 1] = 0.
+        # self.commands[:, 3] = 0.
+        # self.commands[:, 2] = self._heading_to_omega(heading)
 
-        # self.commands[:, 2] = 1.
+        # self.commands[:, 2] = 1
         # print(f"heading_vec: {forward[0]}")
         # print(f"heading: {heading[0]}")
         # print(f"target_vec: {self.target_pos_rel[0]}")
@@ -2682,7 +2918,7 @@ class A1Record(VecTask):
         # self.gait_commands[env_ids, 4] = 0.5
 
         gait_list_ids = torch.randint(0, self.num_gait, (len(env_ids),))
-        gait_list_ids[:] = 11
+        gait_list_ids[:] = 1
         self.gait_id[env_ids] = gait_list_ids.to(self.device).clone()
         self.gait_commands[env_ids, :] = self.gait_tensor[gait_list_ids].clone()
 
@@ -2729,10 +2965,18 @@ class A1Record(VecTask):
         # specific commands
         self.height_commands[:] = 0.3
 
+    def record_states_duration_sim_dt(self):
+        for key in self.record_items_duration_sim_dt:
+            self.obs_buffer_dict[key].record(self.obs_name_to_value[key])
+
+    def record_states_duration_learn_dt(self):
+        for key in self.record_items_duration_learn_dt:
+            self.obs_buffer_dict[key].record(self.obs_name_to_value[key])
+
     def record_states_into_buffer(self):
         ### wsh_annotation: record new states into buffer
         for key in self.record_items:
-            if key != "commands" and key != "heightMeasurement" and key != "feet_phase_sincos" and key != "ref_phase_norm_sincos_current" and key != "ref_phase_norm_sincos_next":
+            if key != "commands" and key != "heightMeasurement" and key != "feet_phase_sincos" and key != "ref_phase_norm_sincos_current" and key != "ref_phase_norm_sincos_next" and key != "global_clock_phase_sin_cos":
                 self.obs_buffer_dict[key].record(self.obs_name_to_value[key])
 
     def record_commands(self):
@@ -2741,6 +2985,9 @@ class A1Record(VecTask):
     def record_ref_phase(self):
         self.obs_buffer_dict["ref_phase_norm_sincos_current"].record(self.obs_name_to_value["ref_phase_norm_sincos_current"])
         self.obs_buffer_dict["ref_phase_norm_sincos_next"].record(self.obs_name_to_value["ref_phase_norm_sincos_next"])
+
+    def record_global_clock_phase(self):
+        self.obs_buffer_dict["global_clock_phase_sin_cos"].record(self.obs_name_to_value["global_clock_phase_sin_cos"])
 
     def calculate_phase(self, sin_theta, cos_theta):
         # Calculate theta
@@ -2949,7 +3196,7 @@ class A1Record(VecTask):
         self.ref_phase_pi_current[:] = self.ref_phase_current * 2. * torch.pi
 
         duty = self.gait_commands[:, 1].unsqueeze(-1)
-        self.ref_phase_norm_current[:] = torch.where(self.ref_phase_current<=duty, 0.5 * self.ref_phase_current/duty, 0.5 + 0.5 * (self.ref_phase_current - duty)/(1. - duty))
+        self.ref_phase_norm_current[:] = torch.where(self.ref_phase_current<=duty, 0.5 * self.ref_phase_current/duty, 0.5 + 0.5 * (self.ref_phase_current - duty)/(1. - duty)) % 1
         # self.ref_phase_norm_current[:, 0] = 0.75  # three legs
         self.ref_phase_norm_pi_current[:] = self.ref_phase_norm_current * 2. * torch.pi
         self.ref_phase_norm_pi_next[:] = self.ref_phase_current + self.ref_delta_phase.unsqueeze(-1)
@@ -2973,6 +3220,7 @@ class A1Record(VecTask):
 
         self.calculate_C_des(self.ref_phase_norm_current)
         self.calculate_foot_pos_track_weight(self.ref_phase_norm_current)
+        # print(f"ref_phase_norm_sincos_current: {self.ref_phase_norm_sincos_current[0]}")
 
     def calculate_ref_dof_commands(self):
         self.motion_planning_interface.update_body_vel_x_y_wz(self.commands[:, :3])
@@ -3043,6 +3291,7 @@ class A1Record(VecTask):
     def calculate_C_des(self, phase_norm):
         self.ref_phase_C_des[:] = self.ref_phase_trans_distribution.cdf(phase_norm) * (1 - self.ref_phase_trans_distribution.cdf(phase_norm - 0.5)) + self.ref_phase_trans_distribution.cdf(phase_norm - 1)
         # self.ref_phase_C_des[:] = torch.where(phase_norm < 0.5, 1.0, 0.0)
+        # print(f"ref_phase_C_des: {self.ref_phase_C_des[0]}")
 
     def calculate_foot_pos_track_weight(self, phase_norm):
         self.foot_pos_track_weight[:] = gaussian(phase_norm) + gaussian(phase_norm - 0.5) + gaussian(phase_norm - 1)
@@ -3148,7 +3397,7 @@ class Terrain:
             return
         self.horizontal_scale = 0.1
         self.vertical_scale = 0.005
-        self.border_size = 20
+        self.border_size = 30
         self.num_per_env = 2
         self.env_length = cfg["mapLength"]
         self.env_width = cfg["mapWidth"]
@@ -3282,7 +3531,7 @@ class Terrain:
             uniform_difficulty = np.random.uniform(0.5, 1)
             # uniform_difficulty = 1
             if not self.add_terrain_obs:
-                if choice < 0.0 or i < 5:
+                if choice < 0.5:
                     pass
                 elif choice < 1.4:
                     random_uniform_terrain(terrain, min_height=-0.02 * uniform_difficulty,
