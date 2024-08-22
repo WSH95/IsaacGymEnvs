@@ -1,6 +1,7 @@
 import torch
 from rl_games.algos_torch import a2c_continuous, torch_ext
 from rl_games.common.a2c_common import A2CBase, swap_and_flatten01
+from rl_games.common import common_losses
 import time
 from collections import OrderedDict
 
@@ -151,15 +152,15 @@ class CustomAgent(a2c_continuous.A2CAgent):
             a_loss = self.actor_loss_func(old_action_log_probs_batch, action_log_probs, advantage, self.ppo,
                                           curr_e_clip)
 
-            # if self.has_value_loss:
-            #     c_loss = common_losses.critic_loss(value_preds_batch, values, curr_e_clip, return_batch,
-            #                                        self.clip_value)
-            # else:
-            #     c_loss = torch.zeros(1, device=self.ppo_device)
+            if self.has_value_loss:
+                c_loss = common_losses.critic_loss(value_preds_batch, values, curr_e_clip, return_batch,
+                                                   self.clip_value)
+            else:
+                c_loss = torch.zeros(1, device=self.ppo_device)
 
             # wsh annotation: imitation loss as c_loss
-            c_loss = torch.mean((mu - ref_actions_batch) ** 2)
-            loss = c_loss
+            # c_loss = torch.mean((mu - ref_actions_batch) ** 2)
+            # loss = c_loss
 
             if self.bound_loss_type == 'regularisation':
                 b_loss = self.reg_loss(mu)
@@ -171,7 +172,7 @@ class CustomAgent(a2c_continuous.A2CAgent):
                 [a_loss.unsqueeze(1), c_loss, entropy.unsqueeze(1), b_loss.unsqueeze(1)], rnn_masks)
             a_loss, c_loss, entropy, b_loss = losses[0], losses[1], losses[2], losses[3]
 
-            # loss = a_loss + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef
+            loss = a_loss + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef
 
             if self.multi_gpu:
                 self.optimizer.zero_grad()
@@ -201,6 +202,70 @@ class CustomAgent(a2c_continuous.A2CAgent):
         self.train_result = (a_loss, c_loss, entropy, \
                              kl_dist, self.last_lr, lr_mul, \
                              mu.detach(), sigma.detach(), b_loss)
+
+    def prepare_dataset(self, batch_dict):
+        obses = batch_dict['obses']
+        returns = batch_dict['returns']
+        dones = batch_dict['dones']
+        values = batch_dict['values']
+        actions = batch_dict['actions']
+        neglogpacs = batch_dict['neglogpacs']
+        mus = batch_dict['mus']
+        sigmas = batch_dict['sigmas']
+        rnn_states = batch_dict.get('rnn_states', None)
+        rnn_masks = batch_dict.get('rnn_masks', None)
+
+        # wsh annotation: add ref_actions
+        ref_actions = batch_dict['ref_actions']
+
+        advantages = returns - values
+
+        if self.normalize_value:
+            self.value_mean_std.train()
+            values = self.value_mean_std(values)
+            returns = self.value_mean_std(returns)
+            self.value_mean_std.eval()
+
+        advantages = torch.sum(advantages, axis=1)
+
+        if self.normalize_advantage:
+            if self.is_rnn:
+                if self.normalize_rms_advantage:
+                    advantages = self.advantage_mean_std(advantages, mask=rnn_masks)
+                else:
+                    advantages = torch_ext.normalization_with_masks(advantages, rnn_masks)
+            else:
+                if self.normalize_rms_advantage:
+                    advantages = self.advantage_mean_std(advantages)
+                else:
+                    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+        dataset_dict = {}
+        dataset_dict['old_values'] = values
+        dataset_dict['old_logp_actions'] = neglogpacs
+        dataset_dict['advantages'] = advantages
+        dataset_dict['returns'] = returns
+        dataset_dict['actions'] = actions
+        dataset_dict['obs'] = obses
+        dataset_dict['dones'] = dones
+        dataset_dict['rnn_states'] = rnn_states
+        dataset_dict['rnn_masks'] = rnn_masks
+        dataset_dict['mu'] = mus
+        dataset_dict['sigma'] = sigmas
+        dataset_dict['ref_actions'] = ref_actions  # wsh annotation: add ref_actions
+
+        self.dataset.update_values_dict(dataset_dict)
+
+        if self.has_central_value:
+            dataset_dict = {}
+            dataset_dict['old_values'] = values
+            dataset_dict['advantages'] = advantages
+            dataset_dict['returns'] = returns
+            dataset_dict['actions'] = actions
+            dataset_dict['obs'] = batch_dict['states']
+            dataset_dict['dones'] = dones
+            dataset_dict['rnn_masks'] = rnn_masks
+            self.central_value_net.update_dataset(dataset_dict)
 
     def discount_values(self, mb_fdones, mb_values, mb_rewards, mb_next_values):
         lastgaelam = 0

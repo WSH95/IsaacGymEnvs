@@ -8,11 +8,12 @@ num_controller_threads: 26
 
 env:
   numEnvs: ${resolve_default:4096,${...num_envs}}
-  numObservations: 787  #191  #99 # 77 # 418 # 48 # 52 # 163
-  numStates: 92
+  numObservations: 68  #191  #99 # 77 # 418 # 48 # 52 # 163
+  lenObsHis: 1
+  numStates: 68
   numActions: 12
   envSpacing: 3.  # [m]
-  enableDebugVis: false
+  enableDebugVis: true
 
 #  clipObservations: 5.0
   clipActions: 4.8 # 4.0  # 4.8
@@ -40,7 +41,7 @@ env:
   xywVelocityCommandThreshold: [ 0.1, 0.05, 0.1 ] # [ 0.1, 0.05, 0.1 ]
 
   baseInitState:
-    pos: [ 0.0, 0.0, 0.302 ] # x,y,z [m] 0.28
+    pos: [ 0.0, 0.0, 0.32 ] # x,y,z [m] 0.28
     #    rot: [ 0.0, 0.0, 0.0, 1.0 ] # x,y,z,w [quat]
     rpy: [ 0.0, 0.0, 0.0 ] # roll, pitch, yaw [rad]
     vLinear: [ 0.0, 0.0, 0.0 ]  # x,y,z [m/s]
@@ -63,15 +64,15 @@ env:
     RL_calf_joint: -1.5908 # -1.7264    # [rad]
 
   terrain:
-    terrainType: plane # none, plane, or trimesh
+    terrainType: trimesh # none, plane, or trimesh
     staticFriction: 1.  # [-]
     dynamicFriction: 1.  # [-]
     restitution: 0.0        # [-]
     # rough terrain only:
     curriculum: false
     maxInitMapLevel: 0
-    mapLength: 20. # 40.
-    mapWidth: 20. # 40.
+    mapLength: 10. # 40.
+    mapWidth: 10. # 40.
     numLevels: 10 # 10
     numTerrains: 20 # 20
     # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
@@ -81,7 +82,7 @@ env:
     numTerrainObservations: 140
     # contain terrain map in observation
     addTerrainObservation: false
-    useMultiprocess: true
+    useMultiprocess: false
     targetThreshold: 0.5
 
 
@@ -112,7 +113,7 @@ env:
     feetAirTimeRewardScale: 0.0 # 0.0
     kneeCollisionRewardScale: -10. # -10.0
     fallenOverRewardScale: -0.0 # -0.0
-    feetStumbleRewardScale: -1. #-1.0
+    feetStumbleRewardScale: -0. #-1.0
     actionRateRewardScale: -0.1 #-0.1
     energyRewardScale: 0.0 # -0.0
     powerRewardScale: -0. # -0.0
@@ -134,7 +135,7 @@ env:
     imitationTorque: 0.
     imitationJointPos: -0.  # -0.4
     imitationJointVel: 0.
-    imitationFootPos: -0.0  #-0.005
+    imitationFootPos: -0.00  #-0.005
     imitationFootVel: -0.0  #-0.01
     imitationLinMomentum: -0.0
     imitationAngMomentum: -0.0
@@ -170,6 +171,7 @@ env:
     observationConfig:
       addNoise: true
       states_combination:
+#        global_clock_phase_sin_cos: 0
         commands: 0
         linearVelocity: 0
         angularVelocity: 0
@@ -180,10 +182,10 @@ env:
         dofVelocity: 0
         lastAction: 0
         feetContactState: 0
-        ref_phase_norm_sincos_leg_broken: [2, 1, 0]
+#        ref_phase_norm_sincos_leg_broken: [2, 1, 0]
       combination:
-#        global_clock_phase_sin_cos: [2, 1, 0]
 #        motor_not_broken_flag: 0
+#        global_clock_phase_sin_cos: 0  #[2, 1, 0]
 #        leg_not_broken_flag: 0
 #        gaitCommands: 0
 #        heightCommands: 0
@@ -195,8 +197,8 @@ env:
         projectedGravity: [150, 140, 130, 120, 110, 100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0] # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 3
 #        body_traj_err: 0
 
-#        motor_not_broken_flag: 0
-#        leg_not_broken_flag: 0
+        motor_not_broken_flag: 0
+        leg_not_broken_flag: 0
 
 #        dofPosition: 0 # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
         dofPositionRelInit: [150, 140, 130, 120, 110, 100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0] # [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150] # [ 0, 1, 4, 8 ] # size -> 12
@@ -276,7 +278,7 @@ env:
           noise: 0
           during_sim_dt: true
         heightMeasurement:
-          size: 0  # 140
+          size: 140  # 140
           bufferLength: 1
           scale: 5.0
           noise: 0.06
@@ -457,7 +459,7 @@ env:
 
     #randomization
     randomizeContactParams: true
-    frictionRange: [ -0.4, 1.0 ]
+    frictionRange: [ 0.0, 1.0 ]
     restitutionRange: [ 0.0, 0.5 ]
     armatureRange: [0.0, 0.01]
     pushRobots: false

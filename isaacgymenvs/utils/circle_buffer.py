@@ -5,6 +5,7 @@ from omegaconf.listconfig import ListConfig
 
 class CircleBuffer:
     def __init__(self, num_buckets: int, single_data_shape: tuple, data_type: torch.dtype, buffer_length: int, device: str = "cuda:0"):
+        self.num_buckets = num_buckets
         self.buffer_shape = (buffer_length, num_buckets,) + single_data_shape
         self.single_data_shape = single_data_shape
         self.data_shape = (num_buckets,) + single_data_shape
@@ -64,6 +65,8 @@ class CircleBuffer:
         else:
             return torch.cat((self.buffer[self.rear + 1:], self.buffer[:self.rear + 1]), dim=0)[-length:].permute(1, 2, 0)
 
+    def get_len_data_flatten(self, length: int):
+        return self.get_len_data(length).permute(0, 2, 1).reshape(self.num_buckets, -1)
 
 if __name__ == "__main__":
     buffer = CircleBuffer(3, (2,), torch.float32, 5)
@@ -90,4 +93,12 @@ if __name__ == "__main__":
     print(buffer.get_index_data(2))
     print(buffer.get_index_data([0, 1, 3]))
     print(buffer.get_index_data(torch.Tensor([2, 1, 0])))
-    print(buffer.get_len_data(1))
+    print(buffer.get_len_data(3))
+    a = buffer.get_len_data(3)
+    b = buffer.get_len_data(3)
+    c = torch.cat([a, b], dim=1).permute(0, 2, 1).reshape(3, -1)
+    print("---------------------")
+    print(buffer.get_len_data_flatten(3))
+    print(a)
+    print(b)
+    print(c)

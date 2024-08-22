@@ -263,6 +263,7 @@ class VecTask(Env):
         # create envs, sim and viewer
         self.sim_initialized = False
         self.create_sim()  # implemented by the extended classes
+
         self.gym.prepare_sim(self.sim)
         self.sim_initialized = True
 
@@ -324,7 +325,7 @@ class VecTask(Env):
 
         self.free_cam = False
         self.lookat_id = 0
-        self.lookat_vec = torch.tensor([-0, 2, 1], requires_grad=False, device=self.device)
+        self.lookat_vec = torch.tensor([0., 1., 0.1], requires_grad=False, device=self.device)
 
     def allocate_buffers(self):
         """Allocate the observation, states, etc. buffers.
@@ -556,9 +557,17 @@ class VecTask(Env):
         self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
 
     def lookat(self, i):
+        # look_at_pos = self.root_states[i, :3].clone()
+        # cam_pos = look_at_pos + self.lookat_vec
+        # self.set_camera(cam_pos, look_at_pos)
+
         look_at_pos = self.root_states[i, :3].clone()
         cam_pos = look_at_pos + self.lookat_vec
-        self.set_camera(cam_pos, look_at_pos)
+        # if not self.control_steps:
+        cam_pos = torch.tensor([-4, -4.0, 8], requires_grad=False, device=self.device) + look_at_pos
+        lookat_vec = torch.tensor([0., 0., 0.], requires_grad=False, device=self.device) + look_at_pos
+        # self.cam_pos = cam_pos
+        self.set_camera(cam_pos, lookat_vec)
         
     def render(self, sync_frame_time=True):
         if self.viewer:

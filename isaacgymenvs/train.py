@@ -211,7 +211,7 @@ def launch_rlg_hydra(cfg: DictConfig):
 
     # dump config dict
     if not cfg.test:
-        experiment_dir = os.path.join('runs', cfg.train.params.config.name +
+        experiment_dir = os.path.join('/home/wsh/mydrive/isaacgymproj/runs', cfg.train.params.config.name +
                                       '_{date:%Y-%m-%d_%H-%M-%S}'.format(date=datetime.now()))
 
         os.makedirs(experiment_dir, exist_ok=True)
@@ -231,6 +231,12 @@ def launch_rlg_hydra(cfg: DictConfig):
         dst_cfg_train_file_path = os.path.join(experiment_dir, cfg.task.name + 'RecordPPO.yaml')
         shutil.copy(cfg_task_file_path, dst_cfg_task_file_path)
         shutil.copy(cfg_train_file_path, dst_cfg_train_file_path)
+        # copy learning files
+        learning_files = ['custom_agent.py', 'custom_models.py', 'custom_player.py']
+        for learning_file in learning_files:
+            learning_file_path = os.path.join('learning', learning_file)
+            dst_learning_file_path = os.path.join(experiment_dir, learning_file)
+            shutil.copy(learning_file_path, dst_learning_file_path)
 
     runner.run({
         'train': not cfg.test,
